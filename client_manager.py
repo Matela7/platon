@@ -8,6 +8,10 @@ class ClientManager:
     def get_collection(self, name: str) -> CollectionStore:
         """Get or create a collection."""
         return CollectionStore(self.client, name)
+
+    def get_collections(self) -> list[str]:
+        """List all collection names."""
+        return [coll.name for coll in self.client.list_collections()]
     
     def search(self, collection_name: str, query: str, n_results: int = 5) -> list[dict]:
         """Search in a specific collection.
