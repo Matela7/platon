@@ -1,7 +1,7 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
-from agents_tools import create_search_tools
-from client_manager import ClientManager
+from agent.tools import create_search_tools
+from vectorstore.client_manager import ClientManager
 from dotenv import load_dotenv
 
 load_dotenv()

@@ -3,8 +3,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 from langchain_community.utilities import SerpAPIWrapper
 
-from client_manager import ClientManager
-from collection_store import CollectionStore
+from vectorstore.client_manager import ClientManager
+from vectorstore.collection_store import CollectionStore
 from datetime import datetime
 
 def create_search_tools(cm: ClientManager):

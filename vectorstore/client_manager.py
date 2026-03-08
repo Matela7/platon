@@ -1,5 +1,5 @@
-from chroma_utils import start_chromadb
-from collection_store import CollectionStore
+from vectorstore.chroma_utils import start_chromadb
+from vectorstore.collection_store import CollectionStore
 
 class ClientManager:
     def __init__(self, persist_dir: str = "./chroma_data"):

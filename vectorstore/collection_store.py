@@ -1,4 +1,4 @@
-from chroma_utils import (
+from vectorstore.chroma_utils import (
     load_pdf_pages_document,
     load_docx_paragraphs_document,
     load_document,
