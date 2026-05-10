@@ -9,6 +9,7 @@ from vectorstore.chroma_utils import (
     format_search_results
 )
 import os
+from pathlib import Path
 
 class CollectionStore:
     def __init__(self, client, name: str):
@@ -24,11 +25,11 @@ class CollectionStore:
         return self._collection
     
     def _save_uploaded_file(self, file_path: str, content: bytes) -> str:
-        target_dir = os.path.join("data", self.name)
-        os.makedirs(target_dir, exist_ok=True)
+        target_dir = Path("data") / self.name
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = os.path.basename(file_path)
-        target_path = os.path.join(target_dir, filename)
+        filename = Path(file_path).name
+        target_path = target_dir / filename
 
         with open(target_path, "wb") as f:
             f.write(content)

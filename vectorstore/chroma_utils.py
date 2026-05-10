@@ -145,13 +145,17 @@ def get_collection(client, name: str):
 ## test
 
 if __name__ == "__main__":
-    collection = start_chromadb()
+    client = start_chromadb()
+    collection = get_collection(client, "debug_collection")
 
-    # Load and add a sample document
+    # Load and add a sample document to a real collection object.
     sample_text = "This is a sample document for testing the Chroma vector store."
     add_document_to_vector_store(collection, sample_text, "sample_doc.txt")
-    sample_pdf = load_pdf_pages_document("duda.pdf")
-    add_pdf_document_to_vector_store(collection, sample_pdf, "dudadupa")
+
+    if os.path.exists("bochenek.pdf"):
+        sample_pdf = load_pdf_pages_document("bochenek.pdf")
+        add_pdf_document_to_vector_store(collection, sample_pdf, "bochenek.pdf")
+
     # Perform a similarity search
     query = "Barack Obama"
     results = similarity_search(collection, query)

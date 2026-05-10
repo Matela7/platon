@@ -1,5 +1,6 @@
 from vectorstore.chroma_utils import start_chromadb
 from vectorstore.collection_store import CollectionStore
+from pathlib import Path
 
 class ClientManager:
     def __init__(self, persist_dir: str = "./chroma_data"):
@@ -12,7 +13,19 @@ class ClientManager:
     def get_collections(self) -> list[str]:
         """List all collection names."""
         return [coll.name for coll in self.client.list_collections()]
-    
+
+    def add_document_to_collection(self, collection_name: str, file_path: str, doc_name: str) -> bool:
+        """Add a document to a specific collection.
+
+        Returns True if the document was added successfully, False otherwise.
+        """
+        collection = self.get_collection(collection_name)
+        try:
+            collection.add_document(file_path, doc_name)
+            return True
+        except Exception:
+            return False
+        
     def search(self, collection_name: str, query: str, n_results: int = 5) -> list[dict]:
         """Search in a specific collection.
         

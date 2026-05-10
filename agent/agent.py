@@ -1,18 +1,20 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
-from agent.tools import create_search_tools
+from langchain_ollama import ChatOllama
+from langchain.agents import create_react_agent
+from agent.tools import create_search_tools, create_utils_tools
 from vectorstore.client_manager import ClientManager
 from dotenv import load_dotenv
 
 load_dotenv()
 
-model = ChatGoogleGenerativeAI(
-    model="gemini-flash-lite-latest",
+model = ChatOllama(
+    model="llama3.1:8b",
     temperature=0.2
 )
 
 cm = ClientManager(persist_dir="./chroma_data")
-search_collection, search_all_collections, search_web, get_list_of_collections, get_current_time = create_search_tools(cm)
+search_tools = create_search_tools(cm)
+utils_tools = create_utils_tools()
+all_tools = list(search_tools) + list(utils_tools)
 
 SYSTEM_PROMPT = """
 You are a precise research assistant with access to document collections and the web.
@@ -29,7 +31,7 @@ After initialization, classify the question into one of these categories:
 - **General knowledge** → can be answered from your own knowledge without tools
 - **Ambiguous** → clarify before proceeding
 
-## Tool selection rules
+## Tool selection rules 
 Follow these rules strictly:
 - If the question is document-based AND relevant collections exist → use `search_collection` or `search_all_collections`
 - If the question requires information newer than your training data OR involves current events → use `search_web`
@@ -50,12 +52,12 @@ Follow these rules strictly:
 
 agent = create_react_agent(
     model=model,
-    tools=[search_collection, search_all_collections, search_web, get_list_of_collections, get_current_time],
+    tools=all_tools,
     prompt=SYSTEM_PROMPT,
 )
 
 result = agent.invoke({
-    "messages": [{"role": "user", "content": "Find information about Andrzej Duda and provide recent web search results."}]
+    "messages": [{"role": "user", "content": "Find information about Andrzej Duda"}]
 })
 
 for message in result["messages"]:

@@ -4,3 +4,5 @@ venv2/
 __pycache__/
 chroma_data/
 *.pdf
+.DS_Store
+*.github/
