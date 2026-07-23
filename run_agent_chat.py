@@ -49,7 +49,7 @@ def _extract_last_assistant_text(messages: list[Any]) -> str:
 
 def _build_agent() -> BaseAgent:
     load_dotenv()
-    model_name = os.getenv("OLLAMA_MODEL", "SpeakLeash/bielik-minitron-7B-v3.0-instruct:Q4_K_M")
+    model_name = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:14b")
     persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
     return BaseAgent(model_name=model_name, persist_dir=persist_dir)
 

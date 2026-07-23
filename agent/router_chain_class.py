@@ -4,7 +4,7 @@ from agent.prompt_loader import load_prompt
 
 
 class RouterChain:
-    def __init__(self, prompt: str, model_type: str = "bielik-minitron-7B-v3.0-instruct:Q6_K"):
+    def __init__(self, prompt: str, model_type: str = "llama3.2:3b"):
         self.model_type = model_type
         self.prompt = prompt or load_prompt("router_prompt.md")
         self._model = ChatOllama(

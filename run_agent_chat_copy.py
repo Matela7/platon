@@ -45,7 +45,7 @@ def _color(text: str, *styles: str) -> str:
 
 def _build_agent() -> BaseAgent:
     load_dotenv()
-    model_name = os.getenv("OLLAMA_MODEL", "SpeakLeash/bielik-minitron-7B-v3.0-instruct:Q4_K_M")
+    model_name = os.getenv("OLLAMA_MODEL", "ornith:9b-q4_K_M")
     persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
     return BaseAgent(model_name=model_name, persist_dir=persist_dir)
 
