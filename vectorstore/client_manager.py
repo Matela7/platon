@@ -20,11 +20,8 @@ class ClientManager:
         Returns True if the document was added successfully, False otherwise.
         """
         collection = self.get_collection(collection_name)
-        try:
-            collection.add_document(file_path, doc_name)
-            return True
-        except Exception:
-            return False
+        collection.add_document(file_path, doc_name)
+        return True
         
     def search(self, collection_name: str, query: str, n_results: int = 5) -> list[dict]:
         """Search in a specific collection.

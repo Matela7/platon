@@ -11,7 +11,10 @@ except ImportError:
     def load_dotenv() -> bool:
         return False
 
-from agent.base_agent_class import BaseAgent
+load_dotenv()
+
+from agent.base_agent import BaseAgent
+from agent.models.agent_config import AgentConfig
 
 
 def _extract_last_assistant_text(messages: list[Any]) -> str:
@@ -48,10 +51,20 @@ def _extract_last_assistant_text(messages: list[Any]) -> str:
 
 
 def _build_agent() -> BaseAgent:
-    load_dotenv()
-    model_name = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:14b")
-    persist_dir = os.getenv("CHROMA_PERSIST_DIR", "./chroma_data")
-    return BaseAgent(model_name=model_name, persist_dir=persist_dir)
+    config = AgentConfig(
+        model_name=os.getenv("OLLAMA_MODEL", AgentConfig().model_name),
+        base_url=os.getenv("OLLAMA_BASE_URL", AgentConfig().base_url),
+        persist_dir=os.getenv("CHROMA_PERSIST_DIR", "./chroma_data"),
+        system_prompt=os.getenv("AGENT_SYSTEM_PROMPT", AgentConfig().system_prompt),
+        sqlite_path=os.getenv("AGENT_SQLITE_PATH"),
+        max_history_messages=int(
+            os.getenv(
+                "AGENT_MAX_HISTORY_MESSAGES",
+                str(AgentConfig().max_history_messages),
+            )
+        ),
+    )
+    return BaseAgent(config=config)
 
 
 def main() -> int:
@@ -61,7 +74,7 @@ def main() -> int:
         print(f"Init error: {exc}", file=sys.stderr)
         return 1
 
-    print("Agent chat uruchomiony (nowy flow z routerem).")
+    print("Agent chat uruchomiony (base agent bez routera).")
     print("Wpisz 'exit', 'quit' albo 'wyjdz', aby zakonczyc.")
     history: list[dict[str, str]] = []
 
@@ -81,9 +94,6 @@ def main() -> int:
 
         try:
             payload = agent.invoke(user_input=user_input, history=history)
-            routing = payload.get("routing", {})
-            result = payload.get("result", {})
-            result_messages = result.get("messages", [])
         except Exception as exc:
             text = str(exc)
             if "Errno 8" in text or "nodename nor servname provided" in text:
@@ -95,13 +105,9 @@ def main() -> int:
                 print(f"\nAgent: Blad podczas zapytania: {exc}")
             continue
 
-        assistant_text = _extract_last_assistant_text(result_messages)
-        route = routing.get("route", "unknown")
-        reason = routing.get("reason", "")
-        if reason:
-            print(f"\n[router] {route}: {reason}")
-        else:
-            print(f"\n[router] {route}")
+        result = payload.get("result", {})
+        result_messages = result.get("messages", [])
+        assistant_text = payload.get("answer") or _extract_last_assistant_text(result_messages)
         print(f"Agent: {assistant_text}")
 
         history.append({"role": "user", "content": user_input})
