@@ -13,8 +13,9 @@ except ImportError:
 
 load_dotenv()
 
-from agent.base_agent import BaseAgent
+from agent.agent_orchestrator import AgentOrchestrator
 from agent.models.agent_config import AgentConfig
+from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
 
 
 def _extract_last_assistant_text(messages: list[Any]) -> str:
@@ -50,21 +51,27 @@ def _extract_last_assistant_text(messages: list[Any]) -> str:
     return "Nie udalo sie odczytac odpowiedzi modelu."
 
 
-def _build_agent() -> BaseAgent:
-    config = AgentConfig(
-        model_name=os.getenv("OLLAMA_MODEL", AgentConfig().model_name),
-        base_url=os.getenv("OLLAMA_BASE_URL", AgentConfig().base_url),
+def _build_agent() -> AgentOrchestrator:
+    defaults = AgentConfig()
+    orchestrator_config = AgentOrchestratorConfig(
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         persist_dir=os.getenv("CHROMA_PERSIST_DIR", "./chroma_data"),
-        system_prompt=os.getenv("AGENT_SYSTEM_PROMPT", AgentConfig().system_prompt),
         sqlite_path=os.getenv("AGENT_SQLITE_PATH"),
+    )
+    agent_config = AgentConfig(
+        model_name=os.getenv("OLLAMA_MODEL", defaults.model_name),
+        system_prompt=os.getenv("AGENT_SYSTEM_PROMPT", defaults.system_prompt),
         max_history_messages=int(
             os.getenv(
                 "AGENT_MAX_HISTORY_MESSAGES",
-                str(AgentConfig().max_history_messages),
+                str(defaults.max_history_messages),
             )
         ),
     )
-    return BaseAgent(config=config)
+    return AgentOrchestrator(
+        config=orchestrator_config,
+        agent_config=agent_config,
+    )
 
 
 def main() -> int:
@@ -74,7 +81,7 @@ def main() -> int:
         print(f"Init error: {exc}", file=sys.stderr)
         return 1
 
-    print("Agent chat uruchomiony (base agent bez routera).")
+    print("Agent chat uruchomiony (supervisor + delegowani specjalisci).")
     print("Wpisz 'exit', 'quit' albo 'wyjdz', aby zakonczyc.")
     history: list[dict[str, str]] = []
 
@@ -107,7 +114,9 @@ def main() -> int:
 
         result = payload.get("result", {})
         result_messages = result.get("messages", [])
-        assistant_text = payload.get("answer") or _extract_last_assistant_text(result_messages)
+        assistant_text = payload.get("answer") or _extract_last_assistant_text(
+            result_messages
+        )
         print(f"Agent: {assistant_text}")
 
         history.append({"role": "user", "content": user_input})

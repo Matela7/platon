@@ -13,8 +13,9 @@ except ImportError:
 
 load_dotenv()
 
-from agent.base_agent import BaseAgent
+from agent.agent_orchestrator import AgentOrchestrator
 from agent.models.agent_config import AgentConfig
+from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
 
 
 def _extract_last_assistant_text(messages: list[Any]) -> str:
@@ -41,19 +42,27 @@ def _extract_last_assistant_text(messages: list[Any]) -> str:
     return "The model returned a response that could not be displayed."
 
 
-def _build_agent() -> BaseAgent:
+def _build_agent() -> AgentOrchestrator:
     defaults = AgentConfig()
-    config = AgentConfig(
-        model_name=os.getenv("OLLAMA_MODEL", defaults.model_name),
-        base_url=os.getenv("OLLAMA_BASE_URL", defaults.base_url),
+    orchestrator_config = AgentOrchestratorConfig(
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         persist_dir=os.getenv("CHROMA_PERSIST_DIR", "./chroma_data"),
-        system_prompt=os.getenv("AGENT_SYSTEM_PROMPT", defaults.system_prompt),
         sqlite_path=os.getenv("AGENT_SQLITE_PATH"),
+    )
+    agent_config = AgentConfig(
+        model_name=os.getenv("OLLAMA_MODEL", defaults.model_name),
+        system_prompt=os.getenv("AGENT_SYSTEM_PROMPT", defaults.system_prompt),
         max_history_messages=int(
-            os.getenv("AGENT_MAX_HISTORY_MESSAGES", str(defaults.max_history_messages))
+            os.getenv(
+                "AGENT_MAX_HISTORY_MESSAGES",
+                str(defaults.max_history_messages),
+            )
         ),
     )
-    return BaseAgent(config=config)
+    return AgentOrchestrator(
+        config=orchestrator_config,
+        agent_config=agent_config,
+    )
 
 
 def _build_ui_html() -> str:
@@ -327,7 +336,7 @@ def _build_ui_html() -> str:
     <aside class="sidebar">
       <div class="brand"><span class="brand-mark">P</span><span>Platon</span></div>
       <button id="new-chat" class="new-chat" type="button"><span>＋</span>New chat</button>
-      <div class="sidebar-note">Local test interface<br>Base agent · No router</div>
+      <div class="sidebar-note">Local test interface<br>Supervisor + specialists</div>
     </aside>
 
     <main class="main">
@@ -459,7 +468,7 @@ async def index(_: web.Request) -> web.Response:
 
 
 async def chat(request: web.Request) -> web.Response:
-    agent: BaseAgent = request.app["agent"]
+    agent: AgentOrchestrator = request.app["agent"]
     history: list[dict[str, str]] = request.app["history"]
 
     try:

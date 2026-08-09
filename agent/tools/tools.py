@@ -88,7 +88,9 @@ def _validate_http_url(url: str, tool_name: str) -> str:
     return url
 
 
-def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
+def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
+    """Create tools backed by the private vector-store client."""
+
     @tool
     def search_collection(collection_name: str, query: str, n_results: int = 5) -> list:
         """Search a specific collection using the ClientManager."""
@@ -102,7 +104,11 @@ def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool
-    def search_all_collections(query: str, n_results: int = 5, n_results_per_collection: int = 5) -> list:
+    def search_all_collections(
+        query: str,
+        n_results: int = 5,
+        n_results_per_collection: int = 5,
+    ) -> list:
         """Search all collections using the ClientManager."""
         try:
             return cm.search_all(query, n_results, n_results_per_collection)
@@ -137,6 +143,20 @@ def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
                 exc,
             ) from exc
 
+    return tuple(
+        _configure_error_handling(tool_instance)
+        for tool_instance in (
+            search_collection,
+            search_all_collections,
+            get_list_of_collections,
+            add_document_to_collection,
+        )
+    )
+
+
+def create_web_search_tools() -> tuple[BaseTool, ...]:
+    """Create public-web discovery tools with no vector-store dependency."""
+
     @tool
     def search_web(query: str) -> dict[str, Any]:
         """Search the web and return current results with source URLs."""
@@ -159,10 +179,7 @@ def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
                 if result:
                     organic_results.append(result)
 
-            response = {
-                "query": query,
-                "organic_results": organic_results,
-            }
+            response = {"query": query, "organic_results": organic_results}
             for key in ("answer_box", "knowledge_graph"):
                 if raw_results.get(key):
                     response[key] = raw_results[key]
@@ -174,16 +191,12 @@ def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
                 exc,
             ) from exc
 
-    return tuple(
-        _configure_error_handling(tool_instance)
-        for tool_instance in (
-            search_collection,
-            search_all_collections,
-            search_web,
-            get_list_of_collections,
-            add_document_to_collection,
-        )
-    )
+    return (_configure_error_handling(search_web),)
+
+
+def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
+    """Backward-compatible aggregate; new agents use narrower factories."""
+    return (*create_rag_tools(cm), *create_web_search_tools())
 
 
 def create_utils_tools() -> tuple[BaseTool, ...]:
@@ -438,7 +451,7 @@ def create_execution_tools(
 
 
 def create_default_tools(cm: ClientManager) -> list[BaseTool]:
-    """Create the five read-only tools exposed to BaseAgent by default."""
+    """Backward-compatible aggregate for callers outside the agent hierarchy."""
     all_tools = (*create_search_tools(cm), *create_utils_tools())
     tools_by_name = {tool_instance.name: tool_instance for tool_instance in all_tools}
     default_names = (
