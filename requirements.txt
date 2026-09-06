@@ -33,7 +33,7 @@ google-cloud-storage==3.7.0
 google-crc32c==1.8.0
 google-genai==1.56.0
 google-resumable-media==2.8.0
-google_search_results==2.4.2
+ddgs==9.14.4
 googleapis-common-protos==1.72.0
 grpc-google-iam-v1==0.14.3
 grpcio==1.76.0
@@ -61,13 +61,16 @@ langchain==1.2.0
 langchain-chroma==1.1.0
 langchain-classic==1.0.1
 langchain-community==0.4.1
-langchain-core==1.2.5
+langchain-core==1.2.21
+langchain-experimental==0.4.1
 langchain-google-genai==4.1.2
 langchain-google-vertexai==3.2.0
 langchain-openai==1.1.6
+langchain-ollama==1.1.0
 langchain-text-splitters==1.1.0
 langgraph==1.0.5
 langgraph-checkpoint==3.0.1
+langgraph-checkpoint-sqlite==2.0.11
 langgraph-prebuilt==1.0.5
 langgraph-sdk==0.3.1
 langsmith==0.5.0
@@ -128,7 +131,6 @@ safetensors==0.7.0
 scikit-learn==1.8.0
 scipy==1.16.3
 sentence-transformers==5.2.0
-serpapi==0.1.5
 shapely==2.1.2
 shellingham==1.5.4
 six==1.17.0

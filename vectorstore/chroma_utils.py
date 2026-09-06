@@ -1,24 +1,23 @@
 import os
 import uuid
 import chromadb
-from sentence_transformers import SentenceTransformer
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from pypdf import PdfReader
 from docx import Document
-
-model = SentenceTransformer("all-MiniLM-L6-v2")
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=100
-)
+from embedding_models import get_embedding_model
 
 def get_model():
-    """Get the global SentenceTransformer model."""
-    return model
+    """Get the process-wide, thread-safe embedding model."""
+    return get_embedding_model()
 
 def get_text_splitter():
     """Get the global text splitter."""
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100
+    )
     return text_splitter
 
 def load_pdf_pages_document(file_path: str) ->list:
@@ -41,6 +40,8 @@ def load_docx_paragraphs_document(file_path: str) -> list:
 
 def add_docx_document_to_vector_store(collection, docx_text: str, doc_name: str | None = None) -> None:
     """Add DOCX document to the vector store."""
+    text_splitter = get_text_splitter()
+    model = get_model()
     chunks = text_splitter.split_text(docx_text)
     
     embeddings = model.encode(chunks).tolist()
@@ -60,6 +61,8 @@ def add_docx_document_to_vector_store(collection, docx_text: str, doc_name: str 
 
 def add_pdf_document_to_vector_store(collection, pdf_pages: list[str], doc_name: str | None = None) -> None:
     """Add PDF pages to the vector store."""
+    text_splitter = get_text_splitter()
+    model = get_model()
     for page_num, page_text in pdf_pages:
         chunks = text_splitter.split_text(page_text)
 
@@ -84,6 +87,8 @@ def load_document(file_path: str) -> str:
         return file.read()
     
 def add_document_to_vector_store(collection, document: str, doc_name: str) -> None:
+    text_splitter = get_text_splitter()
+    model = get_model()
     chunks = text_splitter.split_text(document)
 
     embeddings = model.encode(chunks).tolist()
