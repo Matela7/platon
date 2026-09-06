@@ -1,54 +1,28 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import re
+import socket
 from datetime import datetime
-from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Annotated, Any
+from urllib.parse import urljoin, urlparse
 
+import requests
 from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_community.tools import ShellTool
-from langchain_community.tools.requests.tool import (
-    RequestsGetTool,
-    RequestsPostTool,
-)
-from langchain_community.utilities.requests import TextRequestsWrapper
-from langchain_community.utilities import SerpAPIWrapper
 from langchain_experimental.tools import PythonREPLTool
 from langchain_core.tools import BaseTool, tool
+from pydantic import Field
 
 from agent.tools.errors import ToolError
-
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    def load_dotenv() -> bool:
-        return False
+from websearch.websearch_module import WebSearch
+from websearch.websearch_parameters import DuckDuckGoTime, WebSearchParameters
 
 if TYPE_CHECKING:
     from vectorstore.client_manager import ClientManager
-
-
-@lru_cache(maxsize=1)
-def _get_serpapi_wrapper() -> SerpAPIWrapper:
-    """Create SerpAPIWrapper once and reuse it for all web searches."""
-    try:
-        load_dotenv()
-        return SerpAPIWrapper()
-    except Exception as exc:
-        message = (
-            "SerpAPI could not be initialized. Set SERPAPI_API_KEY and install "
-            "the 'google-search-results' package."
-        )
-        raise ToolError(
-            "search_web",
-            "initializing SerpAPI",
-            message,
-            cause=exc,
-        ) from exc
 
 
 def _configure_error_handling(tool_instance: BaseTool) -> BaseTool:
@@ -77,7 +51,7 @@ def _truncate_output(value: Any, max_chars: int) -> str:
 
 
 def _validate_http_url(url: str, tool_name: str) -> str:
-    """Reject malformed URLs before handing them to Requests tools."""
+    """Allow only absolute public HTTP(S) destinations."""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ToolError(
@@ -85,7 +59,94 @@ def _validate_http_url(url: str, tool_name: str) -> str:
             f"validating URL '{url}'",
             "Only absolute http:// and https:// URLs are supported.",
         )
+    if parsed.username is not None or parsed.password is not None:
+        raise ToolError(
+            tool_name,
+            f"validating URL '{url}'",
+            "Credentials embedded in URLs are not supported.",
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ToolError(
+            tool_name,
+            f"validating URL '{url}'",
+            "The URL must contain a hostname.",
+        )
+
+    try:
+        addresses = {ipaddress.ip_address(hostname)}
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0])
+                for item in socket.getaddrinfo(
+                    hostname,
+                    parsed.port or (443 if parsed.scheme == "https" else 80),
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        except OSError as exc:
+            raise ToolError.from_exception(
+                tool_name,
+                f"resolving hostname '{hostname}'",
+                exc,
+            ) from exc
+
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ToolError(
+            tool_name,
+            f"validating URL '{url}'",
+            "Private, loopback, link-local, and reserved destinations are blocked.",
+        )
     return url
+
+
+def _request_text(
+    method: str,
+    url: str,
+    *,
+    data: dict[str, Any] | None = None,
+    max_redirects: int = 3,
+) -> str:
+    """Perform a bounded request while validating every redirect destination."""
+    current_url = url
+    for redirect_count in range(max_redirects + 1):
+        response = requests.request(
+            method,
+            current_url,
+            json=data if method == "POST" else None,
+            headers={
+                "Accept": "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
+                "User-Agent": "PlatonResearchAgent/1.0",
+            },
+            timeout=(5, 20),
+            allow_redirects=False,
+        )
+        if not response.is_redirect:
+            response.raise_for_status()
+            return response.text or f"HTTP {response.status_code}: empty response body"
+
+        location = response.headers.get("Location")
+        if not location:
+            response.raise_for_status()
+            return response.text
+        if method == "POST":
+            raise ToolError(
+                "http_post",
+                f"following redirect from '{current_url}'",
+                "POST redirects are not followed automatically.",
+            )
+        if redirect_count >= max_redirects:
+            raise requests.TooManyRedirects(
+                f"More than {max_redirects} redirects for {url}"
+            )
+        current_url = _validate_http_url(
+            urljoin(current_url, location),
+            "http_get",
+        )
+
+    raise requests.TooManyRedirects(f"More than {max_redirects} redirects for {url}")
 
 
 def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
@@ -155,35 +216,38 @@ def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
 
 
 def create_web_search_tools() -> tuple[BaseTool, ...]:
-    """Create public-web discovery tools with no vector-store dependency."""
+    """Create ranked DuckDuckGo discovery tools for public-web research."""
 
     @tool
-    def search_web(query: str) -> dict[str, Any]:
-        """Search the web and return current results with source URLs."""
-        try:
-            raw_results = _get_serpapi_wrapper().results(query)
-            if raw_results.get("error"):
-                raise ToolError(
-                    "search_web",
-                    f"searching the web for '{query}'",
-                    str(raw_results["error"]),
+    def search_web(
+        query: str,
+        max_results: int = 15,
+        top_k: int = 5,
+        region: str = "wt-wt",
+        time: Annotated[
+            DuckDuckGoTime,
+            Field(
+                description=(
+                    "DuckDuckGo result-age window: 'd' for the last day, 'w' "
+                    "for the last week, 'm' for the last month, or 'y' for the "
+                    "last year. Pass null for no age filter. This is not a "
+                    "date, current time, timestamp, or filter object."
                 )
-
-            organic_results = []
-            for item in raw_results.get("organic_results", [])[:5]:
-                result = {
-                    key: item[key]
-                    for key in ("title", "link", "snippet", "date", "source")
-                    if item.get(key)
-                }
-                if result:
-                    organic_results.append(result)
-
-            response = {"query": query, "organic_results": organic_results}
-            for key in ("answer_box", "knowledge_graph"):
-                if raw_results.get(key):
-                    response[key] = raw_results[key]
-            return response
+            ),
+        ] = None,
+        source: str = "text",
+    ) -> dict[str, Any]:
+        """Search DuckDuckGo and return deduplicated, relevance-ranked public results."""
+        try:
+            parameters = WebSearchParameters(
+                query=query,
+                max_results=max_results,
+                top_k=top_k,
+                region=region,
+                time=time,
+                source=source,
+            )
+            return {"query": query, "results": WebSearch(parameters).search()}
         except Exception as exc:
             raise ToolError.from_exception(
                 "search_web",
@@ -246,23 +310,19 @@ def create_utils_tools() -> tuple[BaseTool, ...]:
 
 
 def create_http_tools(max_output_chars: int = 20_000) -> tuple[BaseTool, ...]:
-    """Create reusable GET and POST tools with readable failure messages."""
-    requests_wrapper = TextRequestsWrapper()
-    get_tool = RequestsGetTool(
-        requests_wrapper=requests_wrapper,
-        allow_dangerous_requests=True,
-    )
-    post_tool = RequestsPostTool(
-        requests_wrapper=requests_wrapper,
-        allow_dangerous_requests=True,
-    )
+    """Create bounded public HTTP tools with readable failure messages."""
 
     @tool("http_get")
     def http_get(url: str) -> str:
         """Fetch an absolute HTTP(S) URL with a GET request."""
         try:
             validated_url = _validate_http_url(url, "http_get")
-            return _truncate_output(get_tool.run(validated_url), max_output_chars)
+            return _truncate_output(
+                _request_text("GET", validated_url),
+                max_output_chars,
+            )
+        except ToolError:
+            raise
         except Exception as exc:
             raise ToolError.from_exception(
                 "http_get",
@@ -275,11 +335,12 @@ def create_http_tools(max_output_chars: int = 20_000) -> tuple[BaseTool, ...]:
         """Send JSON-compatible data to an absolute HTTP(S) URL with POST."""
         try:
             validated_url = _validate_http_url(url, "http_post")
-            payload = json.dumps(
-                {"url": validated_url, "data": data},
-                ensure_ascii=True,
+            return _truncate_output(
+                _request_text("POST", validated_url, data=data),
+                max_output_chars,
             )
-            return _truncate_output(post_tool.run(payload), max_output_chars)
+        except ToolError:
+            raise
         except Exception as exc:
             raise ToolError.from_exception(
                 "http_post",

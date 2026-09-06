@@ -1,19 +1,16 @@
 import os
 import uuid
-from functools import lru_cache
 import chromadb
 
-from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from pypdf import PdfReader
 from docx import Document
+from embedding_models import get_embedding_model
 
-@lru_cache(maxsize=1)
 def get_model():
-    """Get the global SentenceTransformer model."""
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    return model
+    """Get the process-wide, thread-safe embedding model."""
+    return get_embedding_model()
 
 def get_text_splitter():
     """Get the global text splitter."""

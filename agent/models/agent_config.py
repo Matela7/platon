@@ -16,7 +16,7 @@ class AgentConfig(BaseModel):
         keep_alive: How long Ollama keeps the model loaded after a request.
     """
 
-    model_name: str = "ornith:9b-q4_K_M"
+    model_name: str = "aratan/Ornith-1.5-35B-A3B-Uncensored-GGUF:Q4_K_M"
     system_prompt: str = "react_prompt.md"
     max_history_messages: int = Field(default=24, ge=1)
     max_tool_output_chars: int = Field(default=20_000, ge=1_000)

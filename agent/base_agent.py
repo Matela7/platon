@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
 from agent.models.agent_config import AgentConfig
@@ -53,6 +55,10 @@ class BaseAgent:
             )
         return load_prompt(self.prompt_path)
 
+    def _middleware(self) -> list[Any]:
+        """Return role-specific execution guards for a freshly compiled graph."""
+        return []
+    # tu warto abstrakcjyna funkcje pierdolnac
     def create_agent(self, prompt: str | None = None) -> Any:
         """Compile this role into an invokable LangChain graph."""
         system_prompt = prompt or self.prompt or self._default_prompt()
@@ -60,17 +66,29 @@ class BaseAgent:
             model=self.model,
             tools=self.tools_list,
             system_prompt=system_prompt,
+            middleware=self._middleware(),
             checkpointer=self.checkpointer,
             name=self.agent_name,
             debug=False,
         )
 
-    def invoke(self, task: str, *, config: dict[str, Any] | None = None) -> Any:
-        """Run one self-contained task; orchestration and persistence stay outside."""
-        task = task.strip()
-        if not task:
+    def invoke(
+        self,
+        task: str,
+        *,
+        context_messages: Sequence[BaseMessage] | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> Any:
+        """Run a task with optional prior conversation supplied by an adapter."""
+        if not task.strip():
             raise ValueError("task must not be empty")
+        messages = [
+            message
+            for message in context_messages or []
+            if not isinstance(message, SystemMessage)
+        ]
+        messages.append(HumanMessage(content=task))
         return self.create_agent().invoke(
-            {"messages": [{"role": "user", "content": task}]},
+            {"messages": messages},
             config=config,
         )

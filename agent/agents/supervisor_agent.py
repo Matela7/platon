@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from langchain.agents.middleware import (
+    ModelCallLimitMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
@@ -20,9 +24,18 @@ from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
 
 
 DELEGATION_DESCRIPTIONS = {
-    "research": "Delegate public web research and direct HTTP/API reading.",
-    "coding": "Delegate workspace file changes, shell commands, and code execution.",
-    "database": "Delegate every private knowledge-base or RAG operation.",
+    "research": (
+        "Delegate public web research and HTTP/API reading. user_request is a "
+        "verbatim transport field: copy the user's text, not your interpretation."
+    ),
+    "coding": (
+        "Delegate workspace changes and code execution. user_request is a verbatim "
+        "transport field: copy the user's text, not your interpretation."
+    ),
+    "database": (
+        "Delegate private knowledge-base or RAG work. user_request is a verbatim "
+        "transport field: copy the user's text, not your interpretation."
+    ),
 }
 
 
@@ -31,6 +44,28 @@ class SupervisorAgent(BaseAgent):
 
     agent_name = "supervisor_agent"
     prompt_path = "react_prompt.md"
+
+    def _middleware(self) -> list[Any]:
+        """Allow each specialist once and cap recovery/synthesis model calls."""
+        delegation_names = [
+            tool_instance.name
+            for tool_instance in self.tools_list
+            if tool_instance.name.startswith("delegate_")
+        ]
+        return [
+            *(
+                ToolCallLimitMiddleware(
+                    tool_name=tool_name,
+                    run_limit=2,
+                    exit_behavior="continue",
+                )
+                for tool_name in delegation_names
+            )
+            # ModelCallLimitMiddleware(
+            #     run_limit=max(3, len(delegation_names) + 2),
+            #     exit_behavior="end",
+            # ),
+        ]
 
     def __init__(
         self,
@@ -63,6 +98,7 @@ class SupervisorAgent(BaseAgent):
         runtime_config: AgentOrchestratorConfig,
         *,
         model: BaseChatModel | None = None,
+        checkpointer: Any | None = None,
     ) -> SupervisorAgent:
         """Build the supervisor and its specialists from application config."""
 
@@ -94,6 +130,7 @@ class SupervisorAgent(BaseAgent):
             subagents=subagents,
             config=agent_config,
             prompt=load_prompt(agent_config.system_prompt),
+            checkpointer=checkpointer,
         )
 
     @staticmethod

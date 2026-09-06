@@ -17,7 +17,7 @@ from backend.agent_chat_ui import create_app
 
 
 def main() -> int:
-    host = os.getenv("AGENT_CHAT_UI_HOST", "127.0.0.1")
+    host = os.getenv("AGENT_CHAT_UI_HOST", "0.0.0.0")
     port = int(os.getenv("AGENT_CHAT_UI_PORT", "8080"))
     web.run_app(create_app(), host=host, port=port)
     return 0
