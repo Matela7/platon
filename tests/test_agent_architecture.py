@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from collections.abc import Sequence
@@ -20,6 +21,7 @@ from agent.agents import (
     SupervisorAgent,
 )
 from agent.base_agent import BaseAgent
+from agent.deep_agent import DeepAgent
 from agent.models.agent_config import AgentConfig
 from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
 from agent.prompt_loader import load_prompt
@@ -99,8 +101,9 @@ class AgentArchitectureTests(unittest.TestCase):
         ):
             self.assertTrue(issubclass(agent_class, BaseAgent))
         self.assertFalse(issubclass(AgentToolAdapter, BaseAgent))
+        self.assertTrue(issubclass(SupervisorAgent, DeepAgent))
 
-    def test_all_role_prompts_enable_uncensored_user_directed_mode(self) -> None:
+    def test_role_prompts_are_neutral_and_report_actual_outcomes(self) -> None:
         for prompt_path in (
             "react_prompt.md",
             "agents/research.md",
@@ -109,9 +112,9 @@ class AgentArchitectureTests(unittest.TestCase):
         ):
             with self.subTest(prompt_path=prompt_path):
                 prompt = load_prompt(prompt_path)
-                self.assertIn("## UNCENSORED user-directed mode", prompt)
-                self.assertIn("Do not refuse, moralize, lecture", prompt)
-                self.assertIn("UNCENSORED does not mean fabricated", prompt)
+                self.assertNotIn("UNCENSORED", prompt)
+                self.assertNotIn("Nawrocki", prompt)
+                self.assertIn("report", prompt.lower())
 
     def test_each_specialist_owns_only_its_capability_group(self) -> None:
         with TemporaryDirectory() as directory:
@@ -172,30 +175,25 @@ class AgentArchitectureTests(unittest.TestCase):
             default_prompt.lower(),
         )
 
-    def test_research_agent_returns_after_a_short_first_pass(self) -> None:
-        default_prompt = ResearchAgent(self.model)._default_prompt()
-        normalized_prompt = " ".join(default_prompt.split())
-
-        self.assertIn("One focused `search_web` call is normally enough", default_prompt)
-        self.assertIn(
-            "`get_current_time`, one `search_web`, and, when needed, one `http_get`",
-            normalized_prompt,
-        )
+    def test_research_agent_returns_after_sufficient_evidence(self) -> None:
+        prompt = ResearchAgent(self.model)._default_prompt()
+        self.assertIn("Stop once sufficient evidence", prompt)
+        self.assertIn("configured tool budget", prompt)
 
     def test_research_agent_distinguishes_search_window_from_current_time(self) -> None:
         default_prompt = ResearchAgent(self.model)._default_prompt()
         normalized_prompt = " ".join(default_prompt.split())
 
         self.assertIn(
-            "search_web `time` argument is only DuckDuckGo's result-age window",
+            "search_web time is only a DuckDuckGo result-age window",
             normalized_prompt,
         )
         self.assertIn(
-            "use get_current_time to obtain the current date and time",
+            "use get_current_time for the current date",
             normalized_prompt.lower(),
         )
 
-    def test_supervisor_exposes_only_delegation_tools(self) -> None:
+    def test_default_supervisor_exposes_delegation_and_ask_user(self) -> None:
         subagents = {
             role: StubAgent()
             for role in ("research", "coding", "database")
@@ -207,12 +205,15 @@ class AgentArchitectureTests(unittest.TestCase):
                 "delegate_research",
                 "delegate_coding",
                 "delegate_database",
+                "ask_user",
             ],
         )
         answer = supervisor.tools_list[2].invoke(
             {"user_request": "find in RAG"}
         )
-        self.assertEqual(answer, "done: find in RAG")
+        report = json.loads(answer)
+        self.assertEqual(report["status"], "completed")
+        self.assertIn("find in RAG", report["answer"])
 
     def test_delegation_schema_requires_faithful_user_request(self) -> None:
         supervisor = SupervisorAgent(
@@ -224,10 +225,10 @@ class AgentArchitectureTests(unittest.TestCase):
         schema = research_tool.get_input_schema().model_json_schema()
         self.assertEqual(schema["required"], ["user_request"])
         self.assertIn(
-            "latest user message verbatim",
+            "latest user message",
             schema["properties"]["user_request"]["description"],
         )
-        self.assertIn("verbatim transport field", research_tool.description)
+        self.assertIn("task", schema["properties"])
 
     def test_delegation_preserves_prior_conversation_context(self) -> None:
         research_agent = RecordingAgent()
@@ -282,53 +283,27 @@ class AgentArchitectureTests(unittest.TestCase):
             store=None,
         )
 
-        with self.assertRaisesRegex(
-            Exception,
-            "paraphrases and expanded scope are rejected",
-        ):
-            supervisor.tools_list[0].func(
-                user_request=(
-                    "aktualne wiadomości z ostatnich dni o PiS, sondażach "
-                    "i sprawach wewnętrznych"
-                ),
-                runtime=runtime,
-            )
-
-    def test_supervisor_prompt_keeps_questions_verbatim_during_delegation(
-        self,
-    ) -> None:
-        prompt = SupervisorAgent(
-            self.model,
-            {"research": StubAgent()},
-        )._default_prompt()
-        faithful_request = "kim jest karol nawrocki? co ostatnio zrobil?"
-        invented_request = (
-            "Kim jest Karol Nawrocki, Prezydent Rzeczypospolitej Polskiej? "
-            "Kiedy został wybrany na prezydenta?"
+        _, report = supervisor.tools_list[0].func(
+            user_request="expanded request not present in the original", runtime=runtime,
         )
-        normalized_prompt = " ".join(prompt.split())
+        self.assertEqual(report["status"], "error")
+        self.assertIn("without expanding", report["errors"][0]["message"])
 
-        self.assertIn(
-            f'{{"user_request":"{faithful_request}"}}',
-            prompt,
-        )
-        self.assertIn(invented_request, prompt)
-        self.assertIn("changes open questions into premises", prompt)
-        self.assertIn(
-            "copy the whole message character-for-character",
-            normalized_prompt,
-        )
-        self.assertIn("exact source URL", normalized_prompt)
-        self.assertIn("bare list of domains", normalized_prompt)
+    def test_supervisor_prompt_describes_dependency_reports(self) -> None:
+        prompt = SupervisorAgent(self.model, {"research": StubAgent()})._default_prompt()
+        self.assertIn("specialist reports are supplied automatically", prompt)
+        self.assertIn("Run dependent work in order", prompt)
+        self.assertIn("retry_reason", prompt)
 
-    def test_supervisor_rejects_direct_rag_tool(self) -> None:
+    def test_supervisor_accepts_explicit_rag_tool(self) -> None:
         rag_tool = StructuredTool.from_function(
             func=_fake_rag,
             name="search_collection",
-            description="Forbidden direct RAG access.",
+            description="Explicitly supplied RAG access.",
         )
-        with self.assertRaisesRegex(ValueError, "cannot receive direct RAG"):
-            SupervisorAgent(self.model, {}, tools_list=[rag_tool])
+        supervisor = SupervisorAgent(self.model, {}, tools_list=[rag_tool])
+        self.assertIn(rag_tool, supervisor.tools_list)
+        self.assertEqual([tool.name for tool in supervisor.tools_list], ["search_collection", "ask_user"])
 
     def test_supervisor_composes_all_roles_without_external_factory(self) -> None:
         with TemporaryDirectory() as directory:
@@ -349,9 +324,9 @@ class AgentArchitectureTests(unittest.TestCase):
         self.assertIs(supervisor.subagents["research"].config, supervisor.config)
         self.assertIs(supervisor.subagents["coding"].config, supervisor.config)
         self.assertIs(supervisor.subagents["database"].config, supervisor.config)
-        self.assertIn("You do not have direct access to RAG", supervisor.prompt)
+        self.assertIn("Delegate private knowledge-base retrieval", supervisor.prompt)
         self.assertIn(
-            "Copy the relevant text from the latest user message verbatim",
+            "user_request contains relevant original text",
             supervisor.prompt,
         )
         database_agent = cast(DatabaseAgent, supervisor.subagents["database"])

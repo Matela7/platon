@@ -4,14 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain.agents.middleware import (
-    ModelCallLimitMiddleware,
-    ToolCallLimitMiddleware,
-)
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from agent.base_agent import BaseAgent
+from agent.workflow_agent import WorkflowAgent
 from agent.models.agent_config import AgentConfig
 from agent.tools.tools import (
     create_http_tools,
@@ -20,44 +16,18 @@ from agent.tools.tools import (
 )
 
 
-class ResearchAgent(BaseAgent):
+class ResearchAgent(WorkflowAgent):
     """Research public sources through search and HTTP tools."""
 
     agent_name = "research_agent"
     prompt_path = "agents/research.md"
-
-    @property
-    def max_tool_calls(self) -> int:
-        """Maximum tool calls available during one bounded research pass."""
-        return self._max_tool_calls
-
-    def _middleware(self) -> list[Any]:
-        """Apply the ResearchAgent-owned tool-call ceiling."""
-        return [
-            ToolCallLimitMiddleware(
-                run_limit=self.max_tool_calls,
-                exit_behavior="continue",
-            ),
-            ModelCallLimitMiddleware(
-                run_limit=self.max_tool_calls + 1,
-                exit_behavior="end",
-            ),
-        ]
-
-    def _with_tool_budget(self, system_prompt: str) -> str:
-        return (
-            f"{system_prompt}\n\n"
-            "## Active research budget\n\n"
-            f"- You may make at most {self.max_tool_calls} total tool calls in "
-            "this pass.\n"
-            "- The limit is a ceiling, not a target. Stop earlier as soon as you "
-            "can give a supported answer.\n"
-            "- Do not announce another search or tool call. Either make it now "
-            "within the budget or return the answer."
-        )
-
-    def _default_prompt(self) -> str:
-        return self._with_tool_budget(super()._default_prompt())
+    delegation_description = (
+        "Delegate public web research, current-information checks, and reading public HTTP/API sources. "
+        "Use this specialist when the answer needs fresh or externally verified information. It can search, "
+        "open exact result URLs, check the current time, distinguish ambiguous terms, and return source links. "
+        "It cannot inspect workspace files or private knowledge-base collections."
+    )
+    read_only_tools = frozenset({"search_web", "http_get", "get_current_time"})
 
     def __init__(
         self,
@@ -66,11 +36,13 @@ class ResearchAgent(BaseAgent):
         tools_list: list[BaseTool] | None = None,
         prompt: str | None = None,
         checkpointer: Any | None = None,
-        max_tool_calls: int = 3,
+        max_tool_calls: int | None = None,
     ) -> None:
+        if max_tool_calls is None:
+            max_tool_calls = (config or AgentConfig()).research_tool_limit
         if max_tool_calls < 1:
             raise ValueError("max_tool_calls must be at least 1")
-        self._max_tool_calls = max_tool_calls
+        self.max_tool_calls = max_tool_calls
         super().__init__(
             model=model,
             config=config,
@@ -78,8 +50,6 @@ class ResearchAgent(BaseAgent):
             prompt=prompt,
             checkpointer=checkpointer,
         )
-        if self.prompt is not None:
-            self.prompt = self._with_tool_budget(self.prompt)
         if tools_list is None:
             time_tools = [
                 tool_instance

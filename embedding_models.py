@@ -9,21 +9,24 @@ from typing import Any
 
 from sentence_transformers import SentenceTransformer
 
+from app_logging import LOGGER, log_call
 
-DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DEFAULT_EMBEDDING_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+# it should be transformed to config...
+DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+DEFAULT_EMBEDDING_REVISION = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
 DEFAULT_EMBEDDING_DEVICE = "cpu"
 
 _MODEL_LOAD_LOCK = RLock()
 
-
-@lru_cache(maxsize=4)
+@log_call
+@lru_cache(maxsize=1)
 def _load_embedding_model(
     model_name: str,
     device: str,
     revision: str,
 ) -> SentenceTransformer:
     """Construct one fully materialized SentenceTransformer instance."""
+    LOGGER.info("Loading embedding model (device=%s)", device)
     for attempt in range(2):
         try:
             model = SentenceTransformer(
@@ -36,6 +39,7 @@ def _load_embedding_model(
             is_meta_tensor_error = "meta tensor" in str(exc).lower()
             if not is_meta_tensor_error or attempt == 1:
                 raise
+            LOGGER.warning("Embedding model initialization hit a meta tensor issue; retrying once")
             gc.collect()
 
     meta_parameters = [
@@ -49,9 +53,11 @@ def _load_embedding_model(
             "Embedding model contains unmaterialized meta parameters: "
             f"{names}"
         )
+    LOGGER.info("Embedding model loaded successfully")
     return model
 
 
+@log_call
 def get_embedding_model(
     model_name: str = DEFAULT_EMBEDDING_MODEL,
     *,

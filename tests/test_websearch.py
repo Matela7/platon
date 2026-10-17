@@ -168,7 +168,7 @@ class WebSearchTests(unittest.TestCase):
 
     def test_agent_search_tool_uses_websearch_module(self) -> None:
         search_tool = create_web_search_tools()[0]
-        with patch("agent.tools.tools.WebSearch") as web_search_class:
+        with patch("websearch.websearch_module.WebSearch") as web_search_class:
             web_search_class.return_value.search.return_value = [{"rank": 1}]
             response = search_tool.invoke({"query": "current LangChain release"})
 

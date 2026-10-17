@@ -3,33 +3,54 @@ from __future__ import annotations
 import json
 import ipaddress
 import os
-import re
 import socket
+import shutil
+import subprocess
+import sys
+import signal
+from time import monotonic
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import urljoin, urlparse
 
 import requests
-from langchain_community.agent_toolkits import FileManagementToolkit
-from langchain_community.tools import ShellTool
-from langchain_experimental.tools import PythonREPLTool
 from langchain_core.tools import BaseTool, tool
+
+from app_logging import LOGGER, log_call
+from langgraph.types import interrupt
 from pydantic import Field
 
-from agent.tools.errors import ToolError
-from websearch.websearch_module import WebSearch
+from agent.tools.errors import ToolError, error_details
+from agent.cancellation import RunStopped, current_stop_event
 from websearch.websearch_parameters import DuckDuckGoTime, WebSearchParameters
 
 if TYPE_CHECKING:
     from vectorstore.client_manager import ClientManager
 
 
+@tool
+def ask_user(question: str) -> str:
+    """Ask one focused question when missing information blocks a correct result."""
+    LOGGER.info("Workflow awaiting user clarification")
+    response = interrupt({"kind": "clarification", "question": question})
+    return response["answer"]
+
+
 def _configure_error_handling(tool_instance: BaseTool) -> BaseTool:
     """Return tool failures to the model as readable ToolMessage content."""
-    tool_instance.handle_tool_error = True
+    def report_error(exc):
+        exc.retry_safe = tool_instance.name in {
+            "search_web", "http_get", "search_collection", "search_all_collections",
+            "get_list_of_collections", "read_file", "file_search", "list_directory",
+        }
+        return json.dumps({"status": "error", "errors": [error_details(exc)]}, ensure_ascii=False)
+
+    tool_instance.handle_tool_error = report_error
     tool_instance.handle_validation_error = (
-        lambda exc: f"Tool '{tool_instance.name}' received invalid arguments: {exc}"
+        lambda exc: json.dumps({"status": "error", "errors": [{
+            "tool": tool_instance.name, "category": "validation", "message": str(exc), "retryable": False,
+        }]})
     )
     return tool_instance
 
@@ -102,6 +123,7 @@ def _validate_http_url(url: str, tool_name: str) -> str:
     return url
 
 
+@log_call
 def _request_text(
     method: str,
     url: str,
@@ -149,14 +171,22 @@ def _request_text(
     raise requests.TooManyRedirects(f"More than {max_redirects} redirects for {url}")
 
 
-def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
+def create_rag_tools(cm: ClientManager, max_output_chars: int = 20_000) -> tuple[BaseTool, ...]:
     """Create tools backed by the private vector-store client."""
 
+    def bounded_results(results):
+        if not results:
+            return results
+        allowance = max(1, max_output_chars // len(results))
+        return [{**item, "document": _truncate_output(item["document"], allowance)}
+                if isinstance(item, dict) and "document" in item else item for item in results]
+
     @tool
-    def search_collection(collection_name: str, query: str, n_results: int = 5) -> list:
+    @log_call
+    def search_collection(collection_name: str, query: str, n_results: Annotated[int, Field(ge=1, le=50)] = 5) -> list:
         """Search a specific collection using the ClientManager."""
         try:
-            return cm.search(collection_name, query, n_results)
+            return bounded_results(cm.search(collection_name, query, n_results))
         except Exception as exc:
             raise ToolError.from_exception(
                 "search_collection",
@@ -165,15 +195,18 @@ def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool
+    @log_call
     def search_all_collections(
         query: str,
-        n_results: int = 5,
-        n_results_per_collection: int = 5,
+        n_results: Annotated[int, Field(ge=1, le=50)] = 5,
+        n_results_per_collection: Annotated[int, Field(ge=1, le=50)] = 5,
     ) -> list:
         """Search all collections using the ClientManager."""
         try:
-            return cm.search_all(query, n_results, n_results_per_collection)
+            return bounded_results(cm.search_all(query, n_results, n_results_per_collection))
         except Exception as exc:
+            if hasattr(exc, "partial_results"):
+                exc.partial_results = bounded_results(exc.partial_results[:n_results])
             raise ToolError.from_exception(
                 "search_all_collections",
                 "searching all collections",
@@ -181,6 +214,7 @@ def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool
+    @log_call
     def get_list_of_collections() -> list[str]:
         """Get a list of all collection names."""
         try:
@@ -193,6 +227,7 @@ def create_rag_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool
+    @log_call
     def add_document_to_collection(collection_name: str, file_path: str, doc_name: str) -> bool:
         """Add a document to a specific collection."""
         try:
@@ -219,6 +254,7 @@ def create_web_search_tools() -> tuple[BaseTool, ...]:
     """Create ranked DuckDuckGo discovery tools for public-web research."""
 
     @tool
+    @log_call
     def search_web(
         query: str,
         max_results: int = 15,
@@ -239,6 +275,8 @@ def create_web_search_tools() -> tuple[BaseTool, ...]:
     ) -> dict[str, Any]:
         """Search DuckDuckGo and return deduplicated, relevance-ranked public results."""
         try:
+            from websearch.websearch_module import WebSearch
+
             parameters = WebSearchParameters(
                 query=query,
                 max_results=max_results,
@@ -265,6 +303,7 @@ def create_search_tools(cm: ClientManager) -> tuple[BaseTool, ...]:
 
 def create_utils_tools() -> tuple[BaseTool, ...]:
     @tool
+    @log_call
     def get_current_time() -> str:
         """Get the current date and time in ISO 8601 format."""
         try:
@@ -277,6 +316,7 @@ def create_utils_tools() -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool
+    @log_call
     def get_system_path() -> str:
         """Get the current working directory path."""
         try:
@@ -289,6 +329,7 @@ def create_utils_tools() -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool
+    @log_call
     def execute_ls_command(path: str) -> str:
         """List entries in a directory without executing a shell command."""
         try:
@@ -305,7 +346,7 @@ def create_utils_tools() -> tuple[BaseTool, ...]:
 
     return tuple(
         _configure_error_handling(tool_instance)
-        for tool_instance in (get_current_time, get_system_path, execute_ls_command)
+        for tool_instance in (get_current_time, get_system_path, execute_ls_command, ask_user)
     )
 
 
@@ -313,6 +354,7 @@ def create_http_tools(max_output_chars: int = 20_000) -> tuple[BaseTool, ...]:
     """Create bounded public HTTP tools with readable failure messages."""
 
     @tool("http_get")
+    @log_call
     def http_get(url: str) -> str:
         """Fetch an absolute HTTP(S) URL with a GET request."""
         try:
@@ -331,6 +373,7 @@ def create_http_tools(max_output_chars: int = 20_000) -> tuple[BaseTool, ...]:
             ) from exc
 
     @tool("http_post")
+    @log_call
     def http_post(url: str, data: dict[str, Any]) -> str:
         """Send JSON-compatible data to an absolute HTTP(S) URL with POST."""
         try:
@@ -361,24 +404,58 @@ def create_file_management_tools(
     """Create a file toolkit restricted to a single resolved workspace root."""
     workspace_root = root_dir.expanduser().resolve()
     workspace_root.mkdir(parents=True, exist_ok=True)
-    toolkit = FileManagementToolkit(root_dir=str(workspace_root))
-    toolkit_tools = {
-        tool_instance.name: tool_instance
-        for tool_instance in toolkit.get_tools()
-    }
+    def resolve(path: str) -> Path:
+        target = (workspace_root / path).resolve()
+        if not target.is_relative_to(workspace_root):
+            raise ValueError(f"Path is outside the configured workspace: {path}")
+        return target
 
     def invoke_file_tool(tool_name: str, arguments: dict[str, Any]) -> str:
+        LOGGER.info("Starting workspace file operation (tool=%s)", tool_name)
         try:
-            result = toolkit_tools[tool_name].invoke(arguments)
+            match tool_name:
+                case "read_file":
+                    result = resolve(arguments["file_path"]).read_text(encoding="utf-8")
+                case "write_file":
+                    target = resolve(arguments["file_path"])
+                    with target.open("a" if arguments["append"] else "w", encoding="utf-8") as file:
+                        file.write(arguments["text"])
+                    result = f"Wrote {arguments['file_path']}"
+                case "list_directory":
+                    result = "\n".join(sorted(p.name for p in resolve(arguments["dir_path"]).iterdir()))
+                case "file_search":
+                    matches = resolve(arguments["dir_path"]).rglob(arguments["pattern"])
+                    result = "\n".join(str(p.relative_to(workspace_root)) for p in matches
+                                       if p.resolve().is_relative_to(workspace_root))
+                case "file_delete":
+                    resolve(arguments["file_path"]).unlink()
+                    result = f"Deleted {arguments['file_path']}"
+                case "copy_file" | "move_file":
+                    source = resolve(arguments["source_path"])
+                    destination = resolve(arguments["destination_path"])
+                    if not source.is_file():
+                        raise ValueError("Only files can be copied or moved.")
+                    if destination.is_dir():
+                        destination = resolve(str(destination / source.name))
+                    if tool_name == "copy_file":
+                        shutil.copy2(source, destination)
+                    else:
+                        shutil.move(source, destination)
+                    result = f"{tool_name}: {arguments['source_path']} -> {arguments['destination_path']}"
+                case _:
+                    raise ValueError(f"Unknown file operation: {tool_name}")
+            LOGGER.info("Workspace file operation completed (tool=%s)", tool_name)
             return _truncate_output(result, max_output_chars)
         except Exception as exc:
+            LOGGER.error("Workspace file operation failed (tool=%s, exception=%s)", tool_name, type(exc).__name__)
             raise ToolError.from_exception(
                 tool_name,
-                f"accessing workspace '{workspace_root}'",
+                f"{tool_name} with {arguments!r} in workspace '{workspace_root}'",
                 exc,
             ) from exc
 
     @tool("copy_file")
+    @log_call
     def copy_file(source_path: str, destination_path: str) -> str:
         """Copy a file within the configured workspace."""
         return invoke_file_tool(
@@ -390,11 +467,13 @@ def create_file_management_tools(
         )
 
     @tool("file_delete")
+    @log_call
     def file_delete(file_path: str) -> str:
         """Delete a file within the configured workspace."""
         return invoke_file_tool("file_delete", {"file_path": file_path})
 
     @tool("file_search")
+    @log_call
     def file_search(pattern: str, dir_path: str = ".") -> str:
         """Find workspace files matching a glob pattern."""
         return invoke_file_tool(
@@ -403,6 +482,7 @@ def create_file_management_tools(
         )
 
     @tool("move_file")
+    @log_call
     def move_file(source_path: str, destination_path: str) -> str:
         """Move a file within the configured workspace."""
         return invoke_file_tool(
@@ -414,11 +494,13 @@ def create_file_management_tools(
         )
 
     @tool("read_file")
+    @log_call
     def read_file(file_path: str) -> str:
         """Read a UTF-8 text file from the configured workspace."""
         return invoke_file_tool("read_file", {"file_path": file_path})
 
     @tool("write_file")
+    @log_call
     def write_file(file_path: str, text: str, append: bool = False) -> str:
         """Write or append UTF-8 text within the configured workspace."""
         return invoke_file_tool(
@@ -427,6 +509,7 @@ def create_file_management_tools(
         )
 
     @tool("list_directory")
+    @log_call
     def list_directory(dir_path: str = ".") -> str:
         """List a directory within the configured workspace."""
         return invoke_file_tool("list_directory", {"dir_path": dir_path})
@@ -448,62 +531,87 @@ def create_file_management_tools(
 def create_execution_tools(
     working_dir: Path,
     max_output_chars: int = 20_000,
+    timeout_seconds: int = 120,
 ) -> tuple[BaseTool, ...]:
     """Create host shell and Python tools for the execution subagent."""
     workspace_root = working_dir.expanduser().resolve()
     workspace_root.mkdir(parents=True, exist_ok=True)
-    shell_tool = ShellTool()
-    python_tool = PythonREPLTool()
+
+    def run_stoppable(command, *, shell, stop_event):
+        """Poll the child so Stop can terminate commands without leaving a worker busy."""
+        if stop_event.is_set():
+            raise RunStopped()
+        process = subprocess.Popen(command, shell=shell, cwd=workspace_root, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8" if not shell else None, errors="replace",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"}, start_new_session=os.name != "nt",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        deadline = monotonic() + timeout_seconds
+        try:
+            while True:
+                if stop_event.is_set():
+                    raise RunStopped()
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout_seconds)
+                try:
+                    stdout, stderr = process.communicate(timeout=min(.1, remaining))
+                    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    continue
+        except BaseException as exc:
+            if process.poll() is None:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+                if process.poll() is None:
+                    process.kill()
+            stdout, stderr = process.communicate()
+            if isinstance(exc, subprocess.TimeoutExpired):
+                exc.stdout, exc.stderr = stdout, stderr
+            raise
+
+    def execute(command: str | list[str], *, shell: bool, tool_name: str) -> str:
+        LOGGER.info("Starting host execution tool (tool=%s, shell=%s)", tool_name, shell)
+        try:
+            if stop_event := current_stop_event():
+                result = run_stoppable(command, shell=shell, stop_event=stop_event)
+            else:
+                result = subprocess.run(
+                    command, shell=shell, cwd=workspace_root, capture_output=True,
+                    text=True, encoding="utf-8" if not shell else None, errors="replace", timeout=timeout_seconds,
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                )
+            output = _truncate_output(result.stdout + result.stderr, max_output_chars)
+            if result.returncode:
+                raise ToolError(tool_name, f"running in '{workspace_root}'", f"Exit code {result.returncode}. Output: {output}")
+            LOGGER.info("Host execution tool completed (tool=%s, exit_code=0)", tool_name)
+            return output or "Completed successfully with no output."
+        except ToolError:
+            LOGGER.error("Host execution tool failed (tool=%s)", tool_name)
+            raise
+        except subprocess.TimeoutExpired as exc:
+            LOGGER.error("Host execution tool timed out (tool=%s)", tool_name)
+            output = "".join(part.decode("utf-8", errors="replace") if isinstance(part, bytes) else part or ""
+                             for part in (exc.stdout, exc.stderr))
+            exc.partial_results = [{"tool": tool_name, "output": _truncate_output(output, max_output_chars)}] if output else []
+            raise ToolError.from_exception(tool_name, f"running in '{workspace_root}'", exc) from exc
+        except Exception as exc:
+            LOGGER.error("Host execution tool failed (tool=%s, exception=%s)", tool_name, type(exc).__name__)
+            raise ToolError.from_exception(tool_name, f"running in '{workspace_root}'", exc) from exc
 
     @tool("run_shell")
+    @log_call
     def run_shell(command: str) -> str:
         """Run a shell command on the host, starting in the workspace."""
-        try:
-            if os.name == "nt":
-                scoped_command = (
-                    f'cd /d "{workspace_root}" && {command}'
-                )
-            else:
-                escaped_root = str(workspace_root).replace("'", "'\"'\"'")
-                scoped_command = f"cd -- '{escaped_root}' && {command}"
-
-            result = shell_tool.run(scoped_command)
-            if result is None:
-                raise RuntimeError("ShellTool returned no output after a failure.")
-            if "returned non-zero exit status" in result:
-                raise RuntimeError(result)
-            return _truncate_output(result, max_output_chars)
-        except Exception as exc:
-            raise ToolError.from_exception(
-                "run_shell",
-                f"executing shell command in '{workspace_root}'",
-                exc,
-            ) from exc
+        return execute(command, shell=True, tool_name="run_shell")
 
     @tool("run_python")
+    @log_call
     def run_python(code: str) -> str:
-        """Run Python code on the host, starting in the workspace."""
-        try:
-            scoped_code = (
-                "import os as _agent_os\n"
-                f"_agent_os.chdir({str(workspace_root)!r})\n"
-                f"{code}"
-            )
-            result = python_tool.run(scoped_code)
-            if result is None:
-                raise RuntimeError("PythonREPLTool returned no output.")
-            if re.match(
-                r"^[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)\(",
-                result.strip(),
-            ):
-                raise RuntimeError(result)
-            return _truncate_output(result, max_output_chars)
-        except Exception as exc:
-            raise ToolError.from_exception(
-                "run_python",
-                f"executing Python code in '{workspace_root}'",
-                exc,
-            ) from exc
+        """Run Python in a fresh process in the workspace; variables do not persist between calls."""
+        return execute([sys.executable, "-c", code], shell=False, tool_name="run_python")
 
     return tuple(
         _configure_error_handling(tool_instance)
