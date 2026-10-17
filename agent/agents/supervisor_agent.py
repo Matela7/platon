@@ -1,4 +1,4 @@
-"""Top-level agent that can act only directly or through delegation."""
+"""Deep-agent supervisor coordinating specialists and human clarification."""
 
 from __future__ import annotations
 
@@ -14,7 +14,9 @@ from langchain_ollama import ChatOllama
 
 from agent.adapters.delegation import create_delegation_tools
 from agent.base_agent import BaseAgent
+from agent.deep_agent import DeepAgent
 from agent.prompt_loader import load_prompt
+from agent.tools.tools import ask_user
 
 from agent.agents.coding_agent import CodingAgent
 from agent.agents.database_agent import DatabaseAgent
@@ -23,48 +25,32 @@ from agent.models.agent_config import AgentConfig
 from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
 
 
-DELEGATION_DESCRIPTIONS = {
-    "research": (
-        "Delegate public web research and HTTP/API reading. user_request is a "
-        "verbatim transport field: copy the user's text, not your interpretation."
-    ),
-    "coding": (
-        "Delegate workspace changes and code execution. user_request is a verbatim "
-        "transport field: copy the user's text, not your interpretation."
-    ),
-    "database": (
-        "Delegate private knowledge-base or RAG work. user_request is a verbatim "
-        "transport field: copy the user's text, not your interpretation."
-    ),
-}
-
-
-class SupervisorAgent(BaseAgent):
-    """Coordinate specialized agents without receiving their tools directly."""
+class SupervisorAgent(DeepAgent):
+    """Coordinate specialists with DeepAgent skills, memory and human input."""
 
     agent_name = "supervisor_agent"
-    prompt_path = "react_prompt.md"
 
     def _middleware(self) -> list[Any]:
-        """Allow each specialist once and cap recovery/synthesis model calls."""
+        """Bound distinct tasks and targeted recovery; reuse identical completed results."""
         delegation_names = [
             tool_instance.name
             for tool_instance in self.tools_list
             if tool_instance.name.startswith("delegate_")
         ]
         return [
+            *super()._middleware(),
             *(
                 ToolCallLimitMiddleware(
                     tool_name=tool_name,
-                    run_limit=2,
+                    run_limit=3,
                     exit_behavior="continue",
                 )
                 for tool_name in delegation_names
-            )
-            # ModelCallLimitMiddleware(
-            #     run_limit=max(3, len(delegation_names) + 2),
-            #     exit_behavior="end",
-            # ),
+            ),
+            ModelCallLimitMiddleware(
+                run_limit=max(4, 3 * len(delegation_names) + 2),
+                exit_behavior="end",
+            ),
         ]
 
     def __init__(
@@ -78,11 +64,10 @@ class SupervisorAgent(BaseAgent):
     ) -> None:
         self.subagents = dict(subagents)
         if tools_list is None:
-            tools_list = create_delegation_tools(
-                self.subagents,
-                DELEGATION_DESCRIPTIONS,
-            )
-        self._reject_direct_rag_tools(tools_list)
+            tools_list = create_delegation_tools(self.subagents)
+        tools_list = list(tools_list)
+        if not any(tool.name == ask_user.name for tool in tools_list):
+            tools_list.append(ask_user)
         super().__init__(
             model=model,
             config=config,
@@ -108,6 +93,9 @@ class SupervisorAgent(BaseAgent):
                 model=agent_config.model_name,
                 base_url=runtime_config.base_url,
                 keep_alive=agent_config.keep_alive,
+                num_ctx=agent_config.num_ctx,
+                reasoning=agent_config.reasoning,
+                temperature=0,
             )
         subagents: dict[str, BaseAgent] = {
             "research": ResearchAgent(
@@ -132,16 +120,3 @@ class SupervisorAgent(BaseAgent):
             prompt=load_prompt(agent_config.system_prompt),
             checkpointer=checkpointer,
         )
-
-    @staticmethod
-    def _reject_direct_rag_tools(tools_list: list[BaseTool]) -> None:
-        forbidden = {
-            "search_collection",
-            "search_all_collections",
-            "get_list_of_collections",
-            "add_document_to_collection",
-        }
-        exposed = forbidden & {tool_instance.name for tool_instance in tools_list}
-        if exposed:
-            names = ", ".join(sorted(exposed))
-            raise ValueError(f"SupervisorAgent cannot receive direct RAG tools: {names}")

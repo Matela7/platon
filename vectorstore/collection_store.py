@@ -17,11 +17,11 @@ class CollectionStore:
         self.name = name
         self._collection = None
 
-    @property
-    def _get_collection(self):
-        """Get or create the collection (internal use)."""
+    def _get_collection(self, *, create: bool = False):
+        """Only ingestion may create a collection; retrieval reports missing names."""
         if self._collection is None:
-            self._collection = self.client.get_or_create_collection(name=self.name)
+            getter = self.client.get_or_create_collection if create else self.client.get_collection
+            self._collection = getter(name=self.name)
         return self._collection
     
     def _save_uploaded_file(self, file_path: str, content: bytes) -> str:
@@ -47,13 +47,13 @@ class CollectionStore:
             match document_prefix:
                 case 'pdf':
                     document = load_pdf_pages_document(file_path)
-                    add_pdf_document_to_vector_store(self._get_collection, document, doc_name)
+                    add_pdf_document_to_vector_store(self._get_collection(create=True), document, doc_name)
                 case 'docx':
                     document = load_docx_paragraphs_document(file_path)
-                    add_docx_document_to_vector_store(self._get_collection, document, doc_name)
+                    add_docx_document_to_vector_store(self._get_collection(create=True), document, doc_name)
                 case 'txt':
                     document = load_document(file_path)
-                    add_document_to_vector_store(self._get_collection, document, doc_name)
+                    add_document_to_vector_store(self._get_collection(create=True), document, doc_name)
                 case _:
                     raise ValueError(f"Unsupported file format: {document_prefix}")
         except Exception as e:
@@ -72,5 +72,5 @@ class CollectionStore:
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
         
-        raw_results = similarity_search(self._get_collection, query, n_results)
-        return format_search_results(raw_results) 
+        raw_results = similarity_search(self._get_collection(), query, n_results)
+        return format_search_results(raw_results)

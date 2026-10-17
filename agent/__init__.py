@@ -8,6 +8,7 @@ from typing import Any
 __all__ = [
     "AgentOrchestrator",
     "BaseAgent",
+    "DeepAgent",
     "CodingAgent",
     "DatabaseAgent",
     "ResearchAgent",
@@ -17,6 +18,7 @@ __all__ = [
 _PUBLIC_IMPORTS = {
     "AgentOrchestrator": ("agent.agent_orchestrator", "AgentOrchestrator"),
     "BaseAgent": ("agent.base_agent", "BaseAgent"),
+    "DeepAgent": ("agent.deep_agent", "DeepAgent"),
     "CodingAgent": ("agent.agents", "CodingAgent"),
     "DatabaseAgent": ("agent.agents", "DatabaseAgent"),
     "ResearchAgent": ("agent.agents", "ResearchAgent"),

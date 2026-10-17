@@ -4,6 +4,7 @@ from typing import Any, Sequence
 
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 
+from app_logging import LOGGER, log_call
 from embedding_models import get_embedding_model
 from websearch.websearch_parameters import WebSearchParameters
 from websearch.utils import (
@@ -14,6 +15,7 @@ from websearch.utils import (
 )
 
 
+@log_call
 def rank_results(
     query: str,
     results: list[dict[str, Any]],
@@ -30,6 +32,7 @@ def rank_results(
 
     unique_results = _deduplicate_exact(results)
     if not unique_results:
+        LOGGER.info("Web search ranking skipped because no candidates were returned")
         return []
 
     texts = [query, *(result_to_text(result) for result in unique_results)]
@@ -64,6 +67,7 @@ def rank_results(
     top_results = ranked_results[:top_k]
     for rank, result in enumerate(top_results, start=1):
         result["rank"] = rank
+    LOGGER.info("Web search candidates ranked (input=%d, output=%d)", len(results), len(top_results))
     return top_results
 
 
@@ -83,11 +87,13 @@ class WebSearch:
 
     def search(self) -> list[dict[str, Any]]:
         """Retrieve DuckDuckGo candidates and return reranked results."""
+        LOGGER.info("Retrieving web search candidates (max_results=%d)", self.max_results)
         results = self.wrapper.results(
             self.query,
             max_results=self.max_results,
             source=self.parameters.source,
         )
+        LOGGER.info("Web search retrieval returned %d candidate(s)", len(results))
         return rank_results(
             self.query,
             results,

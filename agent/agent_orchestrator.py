@@ -1,350 +1,268 @@
-"""Conversation orchestration, runtime configuration, and persistence."""
+"""A conversation-bound wrapper over the supervisor's runnable."""
 
-from __future__ import annotations
-
-import json
-import sqlite3
-from datetime import datetime, timezone
+from collections.abc import Iterator
 from pathlib import Path
+from threading import Event
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    trim_messages,
-)
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.types import Command, Overwrite
+from langgraph.graph import END
 
+from app_logging import LOGGER, log_call
 from agent.agents.supervisor_agent import SupervisorAgent
 from agent.base_agent import BaseAgent
+from agent.cancellation import RunStopped, StopHandler
+from agent.conversation_store import ConversationStore
 from agent.models.agent_config import AgentConfig
 from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
+from agent.results import content_text, current_turn, execution_report, visible_messages
 
-HistoryItem = dict[str, str] | BaseMessage
-MessageHistory = list[HistoryItem]
-ConversationSummary = dict[str, str | int]
-
-_CHECKPOINT_THREAD_PREFIX = "platon-chat-v2:"
+MessageHistory = list[dict[str, str]]
 
 
 class AgentOrchestrator:
-    """Run a top-level agent and own conversation persistence."""
-
-    def __init__(
-        self,
-        config: AgentOrchestratorConfig | None = None,
-        agent_config: AgentConfig | None = None,
-        agent: BaseAgent | None = None,
-        thread_id: str | None = None,
-    ) -> None:
-        """Initialize the selected concrete agent and thread persistence.
-
-        Args:
-            config: Infrastructure settings propagated to the concrete agent.
-            agent_config: Behavior settings propagated to the concrete agent.
-            agent: Optional prebuilt top-level agent for dependency injection.
-            thread_id: Optional stable id of the persisted conversation.
-        """
+    @log_call
+    def __init__(self, config=None, agent_config=None, agent: BaseAgent | None = None, thread_id=None):
         self.config = config or AgentOrchestratorConfig()
-        self.agent_config = agent_config or AgentConfig()
-        self.sqlite_path = (
-            Path(self.config.sqlite_path)
-            if self.config.sqlite_path is not None
-            else self.config.working_dir / "agent_threads.sqlite3"
-        )
-        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-        self._sqlite_connection = sqlite3.connect(
-            self.sqlite_path,
-            check_same_thread=False,
-        )
-        self.checkpointer = SqliteSaver(self._sqlite_connection)
-        self.checkpointer.setup()
-        self._init_sqlite()
-        self.thread_id = thread_id or self._latest_thread_id() or str(uuid4())
-        self._ensure_thread()
-        self.agent = agent or SupervisorAgent.from_config(
-            agent_config=self.agent_config,
-            runtime_config=self.config,
-            checkpointer=self.checkpointer,
-        )
+        self.agent_config = agent_config or (agent.config if agent else AgentConfig())
+        self.store = ConversationStore(Path(self.config.sqlite_path or self.config.working_dir / "agent_threads.sqlite3"))
+        self.thread_id = thread_id or self.store.latest() or str(uuid4())
+        self.store.ensure(self.thread_id)
+        self.agent = agent or SupervisorAgent.from_config(self.agent_config, self.config, checkpointer=self.store.checkpointer)
         if not isinstance(self.agent, BaseAgent):
+            self.store.close()
             raise TypeError("agent must inherit from BaseAgent")
         if self.agent.checkpointer is None:
-            self.agent.checkpointer = self.checkpointer
+            if "runnable" in self.agent.__dict__:
+                self.store.close()
+                raise ValueError("Set the checkpointer before the agent's first execution.")
+            self.agent.checkpointer = self.store.checkpointer
+        self.checkpointer = self.agent.checkpointer
+        self.graph = self.agent.runnable
+        self._running = Event()
+        self._stop_event = Event()
+        # Sync streaming reserves a worker for its event waiter, so it needs at least two.
+        self.run_config = {"configurable": {"thread_id": f"platon-chat-v2:{self.thread_id}"}, "max_concurrency": 2, "recursion_limit": 100}
+        LOGGER.info("Conversation ready (agent=%s)", self.agent.agent_name)
 
-    def _init_sqlite(self) -> None:
-        """Create the thread persistence table when it does not exist."""
-        self._sqlite_connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS threads (
-                thread_id TEXT PRIMARY KEY,
-                messages_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        self._sqlite_connection.commit()
+    def _snapshot(self):
+        return self.graph.get_state(self.run_config)
 
-    def _latest_thread_id(self) -> str | None:
-        """Return the most recently updated visible conversation, if any."""
-        row = self._sqlite_connection.execute(
-            "SELECT thread_id FROM threads ORDER BY updated_at DESC LIMIT 1"
-        ).fetchone()
-        return row[0] if row is not None else None
+    def pending_interrupts(self):
+        return [{"id": item.id, "value": item.value} for item in self._snapshot().interrupts]
 
-    def _ensure_thread(self) -> None:
-        """Make a new empty conversation visible before its first message."""
-        now = datetime.now(timezone.utc).isoformat()
-        self._sqlite_connection.execute(
-            """
-            INSERT OR IGNORE INTO threads (
-                thread_id, messages_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?)
-            """,
-            (self.thread_id, "[]", now, now),
-        )
-        self._sqlite_connection.commit()
+    def can_retry(self):
+        snapshot = self._snapshot()
+        return bool(snapshot.next) and not snapshot.interrupts
+
+    def load_thread_history(self):
+        return self.store.load(self.thread_id)
+
+    def list_threads(self):
+        return self.store.list()
+
+    def thread_exists(self, thread_id):
+        return self.store.exists(thread_id)
+
+    def close(self):
+        self.store.close()
+
+    def stop(self) -> bool:
+        """Request cancellation from another thread; the runner performs cleanup."""
+        if not self._running.is_set():
+            return False
+        self._stop_event.set()
+        LOGGER.info("Conversation stop requested")
+        return True
+
+    @log_call
+    def stream(self, user_input: str, history: MessageHistory | None = None, *, stop_event: Event | None = None) -> Iterator[dict[str, Any]]:
+        if not isinstance(user_input, str) or not user_input.strip():
+            raise ValueError("Message cannot be empty.")
+        snapshot = self._snapshot()
+        if snapshot.interrupts:
+            raise ValueError("Resolve the pending approval or question first.")
+        if snapshot.next:
+            raise ValueError("Continue the unfinished run before sending a new message.")
+        visible = list(history if history is not None else self.load_thread_history())
+        # Bootstrap older conversations once; checkpoints remain the execution source of truth.
+        messages = [] if snapshot.values else [
+            (HumanMessage if item["role"] == "user" else AIMessage)(content=item["content"])
+            for item in visible if item.get("role") in {"user", "assistant"}
+        ]
+        messages.append(HumanMessage(content=user_input.strip(), id=str(uuid4())))
+        visible.append({"role": "user", "content": user_input.strip()})
+        self.store.save(self.thread_id, visible)
+        LOGGER.info("Conversation input persisted; starting agent workflow")
+        yield from self._run({"messages": messages}, stop_event=stop_event)
 
     @staticmethod
-    def _message_from_history_item(message: HistoryItem) -> BaseMessage | None:
-        """Convert one stored history entry to a LangChain message."""
-        if isinstance(message, BaseMessage):
-            if isinstance(message, SystemMessage):
-                return None
-            return message
-        if not isinstance(message, dict):
-            return None
+    def _result(events):
+        result = None
+        for event in events:
+            if event["type"] == "result":
+                result = event["data"]
+        if result is None:
+            raise RuntimeError("The agent run ended without a result.")
+        return result
 
-        content = message.get("content")
-        if not isinstance(content, str) or not (content := content.strip()):
-            return None
+    def invoke(self, user_input: str, history: MessageHistory | None = None):
+        return self._result(self.stream(user_input, history))
 
-        match message.get("role"):
-            case "user":
-                return HumanMessage(content=content)
-            case "assistant":
-                return AIMessage(content=content)
-            case "system":
-                return None
-            case _:
-                return None
+    @log_call
+    def resume_stream(self, decisions, *, stop_event: Event | None = None):
+        pending = self.pending_interrupts()
+        if not pending or not isinstance(decisions, dict) or set(decisions) != {item["id"] for item in pending}:
+            raise ValueError("Responses must match the pending interrupt ids.")
+        for item in pending:
+            response = decisions[item["id"]]
+            if item["value"].get("kind") == "clarification":
+                if not isinstance(response, dict) or not isinstance(response.get("answer"), str) or not response["answer"].strip():
+                    raise ValueError("Provide a nonempty answer to the question.")
+            else:
+                choices = response.get("decisions") if isinstance(response, dict) else None
+                if not isinstance(choices, list) or len(choices) != len(item["value"]["action_requests"]):
+                    raise ValueError("Provide one decision for each proposed action.")
+                if any(not isinstance(c, dict) or c.get("type") not in {"approve", "reject"} or ("message" in c and not isinstance(c["message"], str)) for c in choices):
+                    raise ValueError("Decision type must be approve or reject; feedback must be text.")
+        LOGGER.info("Resuming workflow with %d decision(s)", len(pending))
+        yield from self._run(Command(resume=decisions), stop_event=stop_event)
 
-    def _prepare_messages(
-        self, user_input: str, history: MessageHistory | None
-    ) -> list[BaseMessage]:
-        """Normalize, trim, and append the current user input."""
-        messages = [
-            normalized
-            for item in history or []
-            if (normalized := self._message_from_history_item(item)) is not None
-        ]
-        messages = trim_messages(
-            messages,
-            max_tokens=self.agent_config.max_history_messages,
-            token_counter=len,
-            strategy="last",
-            include_system=True,
-            start_on="human",
-        )
-        messages.append(HumanMessage(content=user_input))
-        return messages
+    def resume(self, decisions):
+        return self._result(self.resume_stream(decisions))
 
-    @staticmethod
-    def _content_to_text(content: Any) -> str | None:
-        """Extract normalized plain text from a LangChain content value."""
-        if isinstance(content, str):
-            return content.strip() or None
-        if not isinstance(content, list):
-            return None
+    @log_call
+    def retry_stream(self, *, stop_event: Event | None = None):
+        if not self.can_retry():
+            raise ValueError("There is no unfinished run to continue.")
+        # Resume from the failed node; do not append another user message or replay completed tools.
+        LOGGER.info("Retrying unfinished workflow from its checkpoint")
+        yield from self._run(None, stop_event=stop_event)
 
-        parts = [
-            item if isinstance(item, str) else item.get("text", "")
-            for item in content
-            if isinstance(item, (str, dict))
-        ]
-        text = "\n".join(part.strip() for part in parts if part.strip()).strip()
-        return text or None
+    def _finish_stopped(self, messages, partial_text):
+        """Close pending tool pairs and discard scheduled work, retaining evidence."""
+        messages = list(messages)
+        answered = {message.tool_call_id for message in messages if isinstance(message, ToolMessage)}
+        for message in list(messages):
+            if isinstance(message, AIMessage):
+                for call in message.tool_calls:
+                    if call["id"] not in answered:
+                        messages.append(ToolMessage(
+                            content="Stopped by user before a result was recorded.",
+                            tool_call_id=call["id"], name=call["name"], status="error",
+                        ))
+        if not messages or not isinstance(messages[-1], AIMessage) or messages[-1].tool_calls:
+            text = partial_text.strip()
+            messages.append(AIMessage(content=(text + "\n\n" if text else "") + "[⏹]"))
+        self.graph.update_state(self.run_config, {"messages": Overwrite(messages)}, as_node="model")
+        self.graph.update_state(self.run_config, None, as_node=END)
+        return self._snapshot()
 
-    def _extract_answer(self, result: dict[str, Any]) -> str:
-        """Extract the most recent assistant text response from agent output."""
-        for message in reversed(result.get("messages", [])):
-            content = getattr(message, "content", None)
-            if content is None and isinstance(message, dict):
-                if message.get("role") != "assistant":
-                    continue
-                content = message.get("content")
-            elif getattr(message, "type", None) != "ai":
-                continue
+    def discard_pending_run(self) -> bool:
+        """Cancel an interrupted or failed run so a new user turn can start."""
+        if self._running.is_set():
+            raise RuntimeError("Stop the active run before discarding pending work.")
+        snapshot = self._snapshot()
+        if not snapshot.next and not snapshot.interrupts:
+            return False
+        snapshot = self._finish_stopped(snapshot.values.get("messages", []), "")
+        self.store.save(self.thread_id, visible_messages(snapshot.values.get("messages", [])))
+        return True
 
-            if answer := self._content_to_text(content):
-                return answer
-        return ""
-
-    def _serialize_messages(
-        self, messages: MessageHistory
-    ) -> list[dict[str, str]]:
-        """Serialize supported LangChain messages for SQLite storage."""
-        serialized: list[dict[str, str]] = []
-        for message in messages:
-            normalized = self._message_from_history_item(message)
-            if normalized is None:
-                continue
-
-            role = (
-                "user" if isinstance(normalized, HumanMessage)
-                else "assistant" if isinstance(normalized, AIMessage)
-                else "system" if isinstance(normalized, SystemMessage)
-                else None
-            )
-            content = self._content_to_text(normalized.content)
-            if role is not None and content is not None:
-                serialized.append({"role": role, "content": content})
-        return serialized
-
-    def _save_thread(self, messages: MessageHistory) -> None:
-        """Persist the complete conversation for the current thread."""
-        serialized = self._serialize_messages(messages)
-        now = datetime.now(timezone.utc).isoformat()
-        self._sqlite_connection.execute(
-            """
-            INSERT INTO threads (thread_id, messages_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-                messages_json = excluded.messages_json,
-                updated_at = excluded.updated_at
-            """,
-            (self.thread_id, json.dumps(serialized), now, now),
-        )
-        self._sqlite_connection.commit()
-
-    def load_thread_history(self) -> MessageHistory:
-        """Load the visible history for the current conversation."""
-        row = self._sqlite_connection.execute(
-            "SELECT messages_json FROM threads WHERE thread_id = ?",
-            (self.thread_id,),
-        ).fetchone()
-        if row is None:
-            return []
+    @log_call
+    def _run(self, graph_input, *, stop_event: Event | None = None):
+        if self._running.is_set():
+            raise RuntimeError("An agent run is already active.")
+        active_stop_event = stop_event or Event()
+        self._stop_event = active_stop_event
+        self._running.set()
         try:
-            messages = json.loads(row[0])
-        except (TypeError, json.JSONDecodeError):
-            return []
-        return messages if isinstance(messages, list) else []
+            yield from self._run_active(graph_input, active_stop_event)
+        finally:
+            self._running.clear()
 
-    def thread_exists(self, thread_id: str) -> bool:
-        """Return whether a visible conversation has the exact supplied id."""
-        row = self._sqlite_connection.execute(
-            "SELECT 1 FROM threads WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-        return row is not None
-
-    @staticmethod
-    def _conversation_title(messages: MessageHistory) -> str:
-        """Build a short sidebar title from the first user message."""
-        for message in messages:
-            normalized = AgentOrchestrator._message_from_history_item(message)
-            if not isinstance(normalized, HumanMessage):
-                continue
-            if content := AgentOrchestrator._content_to_text(normalized.content):
-                title = " ".join(content.split())
-                return title if len(title) <= 64 else f"{title[:61]}..."
-        return "New conversation"
-
-    def list_threads(self) -> list[ConversationSummary]:
-        """List all persisted conversations for the history sidebar."""
-        rows = self._sqlite_connection.execute(
-            """
-            SELECT thread_id, messages_json, created_at, updated_at
-            FROM threads
-            ORDER BY updated_at DESC
-            """
-        ).fetchall()
-        conversations: list[ConversationSummary] = []
-        for thread_id, raw_messages, created_at, updated_at in rows:
-            try:
-                messages = json.loads(raw_messages)
-            except (TypeError, json.JSONDecodeError):
-                messages = []
-            if not isinstance(messages, list):
-                messages = []
-            conversations.append(
-                {
-                    "thread_id": thread_id,
-                    "title": self._conversation_title(messages),
-                    "message_count": len(messages),
-                    "created_at": created_at,
-                    "updated_at": updated_at,
-                }
-            )
-        return conversations
-
-    def _checkpoint_config(self) -> dict[str, Any]:
-        """Return the stable checkpoint identity for this conversation."""
-        return {
-            "configurable": {
-                "thread_id": f"{_CHECKPOINT_THREAD_PREFIX}{self.thread_id}",
-            }
-        }
-
-    def _has_checkpoint(self) -> bool:
-        """Return whether the corrected checkpoint namespace has state."""
-        return self.checkpointer.get_tuple(self._checkpoint_config()) is not None
-
-    def close(self) -> None:
-        """Close the SQLite connection owned by this orchestrator."""
-        self._sqlite_connection.close()
-
-    def invoke(
-        self, user_input: str, history: MessageHistory | None = None
-    ) -> dict[str, Any]:
-        """Invoke the selected agent and persist the resulting thread state."""
-        user_input = user_input.strip()
-        if not user_input:
-            raise ValueError("user_input must not be empty")
-
-        started_at = perf_counter()
+    def _run_active(self, graph_input, stop_event: Event):
+        started = perf_counter()
         run_id = str(uuid4())
-        visible_history: MessageHistory = [*(history or [])]
-        messages = (
-            [HumanMessage(content=user_input)]
-            if self._has_checkpoint()
-            else self._prepare_messages(user_input, visible_history)
-        )
-        checkpoint_config = self._checkpoint_config()
-        result = self.agent.create_agent().invoke(
-            {"messages": messages},
-            config={
-                "run_name": "agent_orchestrator_invoke",
-                "tags": ["platon", "orchestrator", self.agent.model_name],
-                **checkpoint_config,
-                "metadata": {
-                    "run_id": run_id,
-                    "agent": type(self.agent).__name__,
-                    "model": self.agent.model_name,
-                    "thread_id": self.thread_id,
-                    "history_messages": len(visible_history),
-                    "persist_dir": self.config.persist_dir,
-                },
-            },
-        )
-        answer = self._extract_answer(result)
-        thread_messages: MessageHistory = [*visible_history]
-        thread_messages.append({"role": "user", "content": user_input})
-        if answer:
-            thread_messages.append({"role": "assistant", "content": answer})
-        self._save_thread(thread_messages)
-
-        return {
-            "run_id": run_id,
-            "answer": answer,
-            "result": result,
-            "messages": messages,
-            "thread_id": self.thread_id,
-            "elapsed_seconds": round(perf_counter() - started_at, 3),
-        }
+        result = {}
+        error = None
+        stopped = False
+        partial_text = ""
+        LOGGER.info("Agent workflow started (run_id=%s)", run_id)
+        stop_handler = StopHandler(stop_event)
+        try:
+            for namespace, mode, chunk in self.graph.stream(
+                graph_input, config={**self.run_config, "run_name": "supervisor", "metadata": {"agent": self.agent.agent_name},
+                                     "callbacks": [stop_handler]},
+                stream_mode=["values", "messages", "updates"], subgraphs=True,
+            ):
+                stop_handler.check()
+                if mode == "values" and not namespace:
+                    result = chunk
+                elif mode == "messages" and not namespace:
+                    message, metadata = chunk
+                    text = message.content if isinstance(message.content, str) else content_text(message.content)
+                    if isinstance(message, AIMessage) and not message.tool_calls and text:
+                        partial_text += text
+                        yield {"type": "delta", "data": text}
+                elif mode == "updates" and isinstance(chunk, dict):
+                    for update in chunk.values():
+                        if not isinstance(update, dict):
+                            continue
+                        messages = update.get("messages", [])
+                        if isinstance(messages, Overwrite):
+                            # DeepAgent normalizes existing history; these are not new tool results.
+                            continue
+                        for message in messages:
+                            if isinstance(message, ToolMessage):
+                                status = message.artifact.get("status", message.status) if isinstance(message.artifact, dict) else message.status
+                                LOGGER.info("Tool step completed (tool=%s, status=%s)", message.name, status)
+                                yield {"type": "progress", "data": {"tool": message.name, "status": status}}
+        except RunStopped:
+            stopped = True
+            LOGGER.info("Agent workflow stopped by request (run_id=%s)", run_id)
+            snapshot = self._snapshot()
+            messages = snapshot.values.get("messages", result.get("messages", []))
+            if isinstance(graph_input, dict) and graph_input.get("messages"):
+                incoming = graph_input["messages"][-1]
+                if not snapshot.values:
+                    messages = graph_input["messages"]
+                elif incoming.id and not any(message.id == incoming.id for message in messages):
+                    messages = [*messages, incoming]
+            snapshot = self._finish_stopped(messages, partial_text)
+            result = {**result, "messages": snapshot.values.get("messages", messages)}
+        except Exception as exc:
+            error = exc
+            LOGGER.exception("Agent workflow failed (run_id=%s)", run_id)
+        snapshot = self._snapshot()
+        messages = snapshot.values.get("messages", result.get("messages", []))
+        for message in reversed(current_turn(messages)):
+            if isinstance(message, AIMessage) and message.response_metadata.get("total_duration"):
+                metadata = message.response_metadata
+                LOGGER.info(
+                    "Ollama timing (load=%.3fs, prompt=%.3fs, generation=%.3fs, output_tokens=%s)",
+                    metadata.get("load_duration", 0) / 1e9,
+                    metadata.get("prompt_eval_duration", 0) / 1e9,
+                    metadata.get("eval_duration", 0) / 1e9,
+                    metadata.get("eval_count", 0),
+                )
+                break
+        interrupts = [{"id": item.id, "value": item.value} for item in snapshot.interrupts]
+        report = execution_report(messages, error)
+        if stopped:
+            report.update(status="stopped", answer="", errors=[])
+        if interrupts:
+            LOGGER.info("Agent workflow paused for %d pending decision(s)", len(interrupts))
+            report.update(status="interrupted", answer="", errors=[])
+        # On errors, checkpoint messages retain confirmed work. Visible history is reconciled too.
+        persisted = visible_messages(messages)
+        if persisted:
+            self.store.save(self.thread_id, persisted)
+        payload = {**report, "run_id": run_id, "thread_id": self.thread_id, "interrupts": interrupts,
+                   "can_retry": bool(snapshot.next) and not interrupts, "result": result,
+                   "elapsed_seconds": round(perf_counter() - started, 3)}
+        LOGGER.info("Agent workflow finished (run_id=%s, status=%s, elapsed=%.3fs)", run_id, payload["status"], payload["elapsed_seconds"])
+        yield {"type": "result", "data": payload}
