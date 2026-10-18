@@ -10,7 +10,7 @@ class Element {
     this.children = [];
     this.events = {};
     this.style = {};
-    this.classList = { toggle() {} };
+    this.classList = { toggle() { return false; }, contains() { return false; }, remove() {} };
     this.value = "";
     this.textContent = "";
     this.disabled = false;
@@ -28,13 +28,17 @@ class Element {
     if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this);
   }
   addEventListener(name, callback) { this.events[name] = callback; }
+  setAttribute() {}
   focus() {}
   scrollTo() {}
 }
 for (const id of ["shell", "chat", "chat-form", "prompt", "send", "meta", "history-list", "stop",
-  "queue-panel", "queue-list", "queue-count", "resume-queue", "clear-queue", "new-chat", "sidebar-toggle"])
+  "queue-panel", "queue-list", "queue-count", "resume-queue", "clear-queue", "new-chat", "sidebar-toggle",
+  "sidebar-backdrop", "sidebar-close"])
   new Element("div", id);
-const document = { getElementById: id => elements.get(id) || null, createElement: tag => new Element(tag) };
+const document = { getElementById: id => elements.get(id) || null, createElement: tag => new Element(tag),
+  addEventListener() {} };
+const window = { matchMedia: () => ({ matches: false, addEventListener() {} }) };
 const requests = [];
 const history = [];
 function jsonResponse(value) { return { ok: true, json: async () => structuredClone(value) }; }
@@ -63,7 +67,7 @@ async function fetch(url, options = {}) {
     return { done: false, value: new TextEncoder().encode(JSON.stringify(await event) + "\n") };
   } }) } };
 }
-const context = vm.createContext({ document, fetch, TextDecoder, Uint8Array });
+const context = vm.createContext({ document, window, fetch, TextDecoder, Uint8Array });
 vm.runInContext(fs.readFileSync(0, "utf8"), context);
 const state = expression => vm.runInContext(expression, context);
 async function until(predicate) {

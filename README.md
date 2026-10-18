@@ -96,6 +96,8 @@ document chunks + provenance supplied to the Database Agent
 
 The embedding model is loaded lazily and cached for the process lifetime. Reading a missing collection produces an error; only an explicit ingestion operation is allowed to create a new collection. PDF provenance includes page and chunk numbers, while DOCX and TXT results include document and chunk identifiers.
 
+Chunk settings, optional ranking/reranking, document reuse, guarded page reads, and separate subagent models are described in [RAG configuration](docs/rag-tuning.md).
+
 ## Technology stack
 
 | Area | Technology |

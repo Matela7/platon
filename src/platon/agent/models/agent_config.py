@@ -12,7 +12,7 @@ class AgentConfig(BaseModel):
 
     Attributes:
         model_name: Primary Ollama model used by the agent.
-        subagent_model_name: Ollama model shared by research, coding and database agents.
+        model_temperature: Sampling temperature used by the primary model.
         system_prompt: Prompt file loaded for the primary agent.
         max_history_messages: Number of recent message units kept in context.
         max_tool_output_chars: Maximum text returned by one tool invocation.
@@ -22,7 +22,7 @@ class AgentConfig(BaseModel):
     """
 
     model_name: str = "ornith-1.5:35b"
-    subagent_model_name: str = "qwen3.5:2b"
+    model_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     system_prompt: str = "react_prompt.md"
     max_history_messages: int = Field(default=24, ge=1)
     max_tool_output_chars: int = Field(default=20_000, ge=1_000)
@@ -32,7 +32,7 @@ class AgentConfig(BaseModel):
     debug: bool = False
     research_tool_limit: int = Field(default=6, ge=1)
     coding_tool_limit: int = Field(default=15, ge=1)
-    database_tool_limit: int = Field(default=4, ge=1)
+    database_tool_limit: int = Field(default=8, ge=1)
     execution_timeout_seconds: int = Field(default=120, ge=1)
     # DeepAgent paths are virtual paths relative to backend_root.
     backend_root: Path = Field(default_factory=lambda: Path.cwd() / ".platon" / "agent")

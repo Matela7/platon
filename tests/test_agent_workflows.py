@@ -58,7 +58,7 @@ class WorkflowTests(unittest.TestCase):
                 "path": "/documents/..",
             }))
 
-    def test_database_exposes_only_rag_and_discovery_and_searches_after_ingestion(self):
+    def test_database_exposes_rag_discovery_and_guarded_read_and_searches_after_ingestion(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             documents = root / "documents"
@@ -97,14 +97,19 @@ class WorkflowTests(unittest.TestCase):
                 }), config=run_config)
             expected_tools = {
                 "ls", "glob", "search_collection", "search_all_collections",
-                "get_list_of_collections", "add_document_to_collection",
+                "get_list_of_collections", "get_collection_info", "add_document_to_collection", "read_file",
             }
             self.assertTrue(exposed)
             for names in exposed:
                 self.assertEqual(set(names), expected_tools)
                 self.assertEqual(len(names), len(expected_tools))
-            manager.add_document_to_collection.assert_called_once_with("books", str(pdf), pdf.name)
-            manager.search.assert_called_once_with("books", "compare", 5)
+            manager.add_document_to_collection.assert_called_once_with(
+                "books", str(pdf), pdf.name, chunk_size=1000, chunk_overlap=100, reindex=False,
+            )
+            manager.search.assert_called_once_with(
+                "books", "compare", 5, rank=False, rerank=False, candidate_k=None,
+                embedding_weight=0.8, semantic_dedup_threshold=None,
+            )
             self.assertEqual(result["messages"][-1].content, "Answer based on the retrieved passage.")
             self.assertIn("Verified passage", str(result["messages"]))
             self.assertFalse((root / "shared").exists())

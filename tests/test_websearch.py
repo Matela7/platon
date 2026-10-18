@@ -10,6 +10,8 @@ import numpy as np
 
 from platon.agent.tools.web import create_web_search_tools
 from platon.embedding_models import (
+    DEFAULT_EMBEDDING_MODEL,
+    DEFAULT_EMBEDDING_REVISION,
     clear_embedding_model_cache,
     get_embedding_model,
 )
@@ -116,9 +118,9 @@ class WebSearchTests(unittest.TestCase):
 
             self.assertEqual(constructions, 1)
             constructor.assert_called_once_with(
-                "sentence-transformers/all-MiniLM-L6-v2",
+                DEFAULT_EMBEDDING_MODEL,
                 device="cpu",
-                revision="1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+                revision=DEFAULT_EMBEDDING_REVISION,
             )
             self.assertTrue(all(model is fake_model for model in models))
         finally:

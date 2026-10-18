@@ -83,7 +83,7 @@ class BaseAgent:
         return {"messages": messages}
 
     def _middleware(self) -> list[Any]:
-        return [context_middleware(self.config.max_history_messages)]
+        return [context_middleware(self.config.max_history_messages, self.config.num_ctx)]
 
     @log_call
     def create_agent(self) -> Any:

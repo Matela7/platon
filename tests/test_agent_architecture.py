@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import json
+from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from collections.abc import Sequence
@@ -103,6 +104,20 @@ class AgentArchitectureTests(unittest.TestCase):
         self.assertFalse(issubclass(AgentToolAdapter, BaseAgent))
         self.assertTrue(issubclass(SupervisorAgent, DeepAgent))
 
+    def test_supervisor_shares_one_model_with_all_specialists(self) -> None:
+        config = AgentConfig(model_temperature=0.25)
+        with patch(
+            "platon.agent.agents.supervisor_agent.ChatOllama",
+            return_value=self.model,
+        ) as chat_ollama:
+            supervisor = SupervisorAgent.from_config(config, AgentOrchestratorConfig())
+
+        chat_ollama.assert_called_once()
+        self.assertIs(supervisor.model, self.model)
+        self.assertTrue(all(agent.model is self.model for agent in supervisor.subagents.values()))
+        self.assertEqual(chat_ollama.call_args.kwargs["temperature"], 0.25)
+        self.assertEqual(AgentConfig().model_temperature, 0.0)
+
     def test_role_prompts_are_neutral_and_report_actual_outcomes(self) -> None:
         for prompt_path in (
             "react_prompt.md",
@@ -135,9 +150,10 @@ class AgentArchitectureTests(unittest.TestCase):
             "search_collection",
             "search_all_collections",
             "get_list_of_collections",
+            "get_collection_info",
             "add_document_to_collection",
         }
-        self.assertEqual(names["database"], rag_names | {"ls", "glob"})
+        self.assertEqual(names["database"], rag_names | {"ls", "glob", "read_file"})
         self.assertTrue(rag_names.isdisjoint(names["research"]))
         self.assertTrue(rag_names.isdisjoint(names["coding"]))
 
@@ -268,7 +284,7 @@ class AgentArchitectureTests(unittest.TestCase):
             ["Opowiedz o sytuacji PiS.", "Który obszar mam sprawdzić?"],
         )
 
-    def test_delegation_rejects_an_expanded_paraphrase(self) -> None:
+    def test_delegation_warns_on_an_expanded_paraphrase(self) -> None:
         supervisor = SupervisorAgent(self.model, {"research": StubAgent()})
         runtime = ToolRuntime(
             state={
@@ -283,17 +299,26 @@ class AgentArchitectureTests(unittest.TestCase):
             store=None,
         )
 
-        _, report = supervisor.tools_list[0].func(
-            user_request="expanded request not present in the original", runtime=runtime,
-        )
-        self.assertEqual(report["status"], "error")
-        self.assertIn("without expanding", report["errors"][0]["message"])
+        with patch("platon.agent.adapters.delegation.LOGGER.warning") as warning:
+            _, report = supervisor.tools_list[0].func(
+                user_request="expanded request not present in the original", runtime=runtime,
+            )
+        self.assertEqual(report["status"], "completed")
+        warning.assert_called_once()
+        self.assertIn("without expanding", warning.call_args.args[0])
 
     def test_supervisor_prompt_describes_dependency_reports(self) -> None:
         prompt = SupervisorAgent(self.model, {"research": StubAgent()})._default_prompt()
         self.assertIn("specialist reports are supplied automatically", prompt)
         self.assertIn("Run dependent work in order", prompt)
         self.assertIn("retry_reason", prompt)
+
+    def test_supervisor_prompt_describes_memory_and_skill_usage(self) -> None:
+        prompt = SupervisorAgent(self.model, {"research": StubAgent()})._default_prompt()
+        self.assertIn("loaded memory as persistent context", prompt)
+        self.assertIn("read its complete `SKILL.md`", prompt)
+        self.assertIn("explicitly asks you to remember or forget", prompt)
+        self.assertIn("Never store secrets", prompt)
 
     def test_supervisor_accepts_explicit_rag_tool(self) -> None:
         rag_tool = StructuredTool.from_function(
@@ -319,12 +344,12 @@ class AgentArchitectureTests(unittest.TestCase):
 
         self.assertEqual(
             list(supervisor.subagents),
-            ["research", "coding", "database"],
+            ["research", "coding", "database", "skill_creator"],
         )
         self.assertIs(supervisor.subagents["research"].config, supervisor.config)
         self.assertIs(supervisor.subagents["coding"].config, supervisor.config)
         self.assertIs(supervisor.subagents["database"].config, supervisor.config)
-        self.assertIn("Delegate private knowledge-base retrieval", supervisor.prompt)
+        self.assertIn("Delegate all document-content analysis", supervisor.prompt)
         self.assertIn(
             "user_request contains relevant original text",
             supervisor.prompt,

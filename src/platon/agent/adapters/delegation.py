@@ -1,7 +1,9 @@
 """Pass task goals, evidence and failure reports across specialist boundaries."""
 
 import json
+import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any, Mapping
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -18,6 +20,90 @@ from platon.agent.results import content_text, current_turn, execution_report
 from platon.agent.tools.errors import ToolError
 
 
+def _excerpt(value: Any, limit: int) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= limit:
+        return text
+    marker = f" [truncated; {len(text) - limit} more characters] "
+    head = max(0, (limit - len(marker)) * 2 // 3)
+    tail = max(0, limit - len(marker) - head)
+    return text[:head] + marker + (text[-tail:] if tail else "")
+
+
+def _compact_report(report: Any) -> dict[str, Any]:
+    """Pass useful findings and failure details without replaying raw tool logs."""
+    if not isinstance(report, dict):
+        return {"answer": _excerpt(report, 2_000)}
+    compact = {key: report[key] for key in ("agent", "user_request", "task", "status") if key in report}
+    compact["answer"] = _excerpt(report.get("answer", ""), 1_500)
+    errors = report.get("errors", [])
+    if errors:
+        compact["errors"] = [
+            {**{key: item[key] for key in ("category", "operation", "tool", "retryable") if key in item},
+             "message": _excerpt(item.get("message", ""), 500)}
+            if isinstance(item, dict) else {"message": _excerpt(item, 500)}
+            for item in errors[:5]
+        ]
+        if len(errors) > 5:
+            compact["omitted_errors"] = len(errors) - 5
+    evidence = report.get("evidence", [])
+    if isinstance(evidence, list) and evidence:
+        snippets = []
+        for item in evidence:
+            if not isinstance(item, dict):
+                snippets.append(_excerpt(item, 400))
+                continue
+            output = item.get("output")
+            if isinstance(output, list) and output and all(isinstance(row, dict) and "document" in row for row in output):
+                # A single search tool result can hold 25 passages. Sample *inside*
+                # every result group, preserving both books and their page metadata.
+                indices = range(min(len(output), 4))
+                rows = []
+                for index in indices:
+                    row = output[index]
+                    rows.append({"document_excerpt": _excerpt(row["document"], 650),
+                                 "metadata": row.get("metadata"),
+                                 **({"distance": row["distance"]} if "distance" in row else {})})
+                snippets.append({"tool": item.get("tool"), "status": item.get("status"),
+                                 "passages": rows, "omitted_passages": len(output) - len(indices)})
+            elif item.get("status") in {"error", "partial"}:
+                snippets.append({"tool": item.get("tool"), "status": item.get("status"),
+                                 "output": _excerpt(output, 500)})
+            elif len(snippets) < 4:
+                snippets.append({"tool": item.get("tool"), "status": item.get("status"),
+                                 "output": _excerpt(output, 400)})
+        compact["evidence"] = snippets[:16]
+        if len(snippets) > 16:
+            compact["omitted_evidence"] = len(snippets) - 16
+    return compact
+
+
+def _source_files(value: str) -> set[str]:
+    return set(re.findall(r"[\w.-]+\.(?:pdf|docx|txt)\b", value.casefold()))
+
+
+def _same_goal(first: str, second: str) -> bool:
+    # Different source documents mean different work, even when nearly every
+    # other word in two analysis requests is identical.
+    if _source_files(first) != _source_files(second):
+        return False
+
+    def words(value: str) -> list[str]:
+        return re.findall(r"\w+", value.casefold(), flags=re.UNICODE)
+    left, right = words(first), words(second)
+    if not left or not right:
+        return first.strip() == second.strip()
+    overlap = len(set(left) & set(right)) / max(1, min(len(set(left)), len(set(right))))
+    return overlap >= .8 and SequenceMatcher(None, " ".join(left), " ".join(right)).ratio() >= .65
+
+
+def _meaningful_retry(reason: str) -> bool:
+    cleaned = " ".join(reason.casefold().split())
+    generic = {"retry", "try again", "ponów", "ponow", "spróbuj ponownie", "sprobuj ponownie",
+               "krócej", "krocej", "concise", "shorter"}
+    return len(cleaned) >= 20 and cleaned not in generic
+
+
 class DelegationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
     user_request: str = Field(min_length=1, description="Relevant original text copied from the latest user message; preserve scope and uncertainty.")
@@ -31,16 +117,21 @@ def _conversation_context(runtime, user_request: str, tool_name: str, limit: int
         return [], []
     messages = bounded_messages(runtime.state.get("messages", []), limit)
     turn = current_turn(messages)
-    if not turn or not isinstance(turn[0], HumanMessage) or user_request not in content_text(turn[0].content):
-        # raise ToolError(tool_name, "validating delegated request", "user_request must be copied from the latest user message without expanding its scope.")
-        LOGGER.warning("Delegated request should have the user request copied from the latest user message (tool=%s, user_request=%s)", tool_name, user_request)
+    if not turn or not isinstance(turn[0], HumanMessage):
+        raise ToolError(tool_name, "validating delegated request", "No latest user message is available for delegation.")
+    # A generated summary can become the active HumanMessage after compaction.
+    # It is trusted as context, but must not be mistaken for the user's wording.
+    source = (turn[0].additional_kwargs.get("lc_source")
+              or turn[0].response_metadata.get("lc_source"))
+    if source != "summarization" and user_request not in content_text(turn[0].content):
+        LOGGER.warning("Delegated request should be copied from the latest user message without expanding its scope (tool=%s, user_request=%s)", tool_name, user_request)
     prior = messages[:len(messages) - len(turn)]
     context = [m for m in prior if isinstance(m, HumanMessage) or isinstance(m, AIMessage) and not m.tool_calls]
     # Pass reports as task data, avoiding orphan tool responses.
     reports = [
-        {"agent_tool": m.name, "report": m.artifact if m.artifact is not None else content_text(m.content)}
+        {"agent_tool": m.name, "report": _compact_report(m.artifact if m.artifact is not None else content_text(m.content))}
         for m in messages if isinstance(m, ToolMessage) and m.name and m.name.startswith("delegate_")
-    ]
+    ][-3:]
     return context, reports
 
 
@@ -61,15 +152,27 @@ class AgentToolAdapter:
         try:
             context, reports = _conversation_context(runtime, user_request, self.tool_name, self.agent.config.max_history_messages)
             if runtime is not None:
-                previous = [m.artifact for m in current_turn(runtime.state.get("messages", []))
-                            if isinstance(m, ToolMessage) and m.name == self.tool_name and isinstance(m.artifact, dict)
-                            and m.artifact.get("user_request") == user_request and m.artifact.get("task") == task]
+                role_reports = [m.artifact for m in current_turn(runtime.state.get("messages", []))
+                                if isinstance(m, ToolMessage) and m.name == self.tool_name
+                                and isinstance(m.artifact, dict)
+                                and _same_goal(m.artifact.get("user_request", ""), user_request)]
+                requested_files = _source_files(task or user_request)
+                completed = [item for item in role_reports if item.get("status") == "completed"
+                             and not (_source_files(item.get("task") or item.get("user_request", ""))
+                                      and requested_files
+                                      and _source_files(item.get("task") or item.get("user_request", ""))
+                                      != requested_files)]
+                if completed:
+                    LOGGER.info("Reusing completed delegated result (role=%s)", self.role)
+                    return json.dumps(_compact_report(completed[-1]), ensure_ascii=False), completed[-1]
+                previous = [item for item in role_reports
+                            if _same_goal(item.get("task") or item.get("user_request", ""), task or user_request)]
                 if previous:
-                    if previous[-1]["status"] == "completed":
-                        LOGGER.info("Reusing completed delegated task (role=%s)", self.role)
-                        return json.dumps(previous[-1], ensure_ascii=False), previous[-1]
-                    if not retry_reason.strip():
-                        raise ToolError(self.tool_name, "retrying delegated task", "Provide a concrete retry_reason and use the previous report before repeating incomplete work.")
+                    if len(previous) >= 2 or not _meaningful_retry(retry_reason):
+                        raise ToolError(self.tool_name, "retrying delegated task", "A repeated incomplete task needs a concrete changed approach; do not repeat the same failed attempt.")
+                    if any(error.get("retryable") is False and error.get("category") in {"permission", "validation"}
+                           for error in previous[-1].get("errors", []) if isinstance(error, dict)):
+                        raise ToolError(self.tool_name, "retrying delegated task", "The previous failure is not retryable without correcting its inputs or permissions.")
             original_request = content_text(current_turn(runtime.state["messages"])[0].content) if runtime else user_request
             # Keep dependencies in the active task so model-context trimming cannot discard them.
             assignment = json.dumps({"user_request": user_request, "original_request": original_request,
@@ -87,7 +190,7 @@ class AgentToolAdapter:
             report = execution_report(getattr(exc, "agent_messages", []), error=exc)
         report.update({"agent": self.role, "user_request": user_request, "task": task})
         LOGGER.info("Delegated task finished (role=%s, status=%s)", self.role, report.get("status", "unknown"))
-        return json.dumps(report, ensure_ascii=False), report
+        return json.dumps(_compact_report(report), ensure_ascii=False), report
 
     def as_tool(self) -> BaseTool:
         def validation_report(exc):

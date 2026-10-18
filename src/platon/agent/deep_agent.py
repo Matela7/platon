@@ -4,13 +4,29 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
+from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from platon.agent.base_agent import BaseAgent
+from platon.agent.models.agent_config import AgentConfig
 from platon.agent.prompt_loader import load_prompt
 from platon.agent.tools.interaction import ask_user
 
 
 class DeepAgent(BaseAgent):
     agent_name = "deep_agent"
+
+    def __init__(
+        self,
+        model: BaseChatModel,
+        config: AgentConfig | None = None,
+        tools_list: list[BaseTool] | None = None,
+        prompt: str | None = None,
+        checkpointer: Any | None = None,
+        *,
+        subagent_model: BaseChatModel | None = None,
+    ) -> None:
+        super().__init__(model, config, tools_list, prompt, checkpointer)
+        self.subagent_model = subagent_model
 
     def _default_prompt(self) -> str:
         return load_prompt(self.config.system_prompt)
@@ -32,6 +48,15 @@ class DeepAgent(BaseAgent):
             tools.append(ask_user)
         return create_deep_agent(
             model=self.model,
+            subagents=[{
+                "name": "general-purpose",
+                "description": "Delegate a bounded task requiring independent work and context.",
+                "system_prompt": self.prompt or self._default_prompt(),
+                "model": self.subagent_model if self.subagent_model is not None else self.model,
+                "tools": tools,
+                "middleware": self._middleware(),
+                "skills": self.config.skills,
+            }],
             tools=tools,
             system_prompt=self.prompt or self._default_prompt(),
             middleware=self._middleware(),

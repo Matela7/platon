@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.tools import BaseTool, tool
 
 from platon.agent.tools.common import configure_error_handling, truncate_output
 from platon.agent.tools.errors import ToolError
 from platon.app_logging import LOGGER, log_call
+
+
+READ_LIMITS = {"small": 2_000, "standard": 6_000, "expanded": 12_000, "deep": 30_000}
 
 
 def create_document_discovery_tools(
@@ -59,6 +62,15 @@ def create_document_discovery_tools(
         """
         return discover("glob", path, pattern)
 
+    @tool("file_search")
+    @log_call
+    def file_search(pattern: str, dir_path: str = ".") -> str:
+        """Find workspace files matching a glob pattern."""
+        return discover(
+            "file_search",
+            {"pattern": pattern, "dir_path": dir_path},
+        )
+
     return tuple(configure_error_handling(tool) for tool in (ls, glob))
 
 
@@ -71,6 +83,8 @@ def create_file_management_tools(
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     def resolve(path: str) -> Path:
+        if workspace_root.name == "documents" and (path == "/documents" or path.startswith("/documents/")):
+            path = path[len("/documents"):].lstrip("/") or "."
         target = (workspace_root / path).resolve()
         if not target.is_relative_to(workspace_root):
             raise ValueError(f"Path is outside the configured workspace: {path}")
@@ -81,7 +95,36 @@ def create_file_management_tools(
         try:
             match tool_name:
                 case "read_file":
-                    result = resolve(arguments["file_path"]).read_text(encoding="utf-8")
+                    target = resolve(arguments["file_path"])
+                    start_page, end_page = arguments["start_page"], arguments["end_page"]
+                    if start_page < 1 or (end_page is not None and end_page < start_page):
+                        raise ValueError("Pages are one-based and end_page must be at least start_page")
+                    if target.suffix.lower() == ".pdf":
+                        from pypdf import PdfReader
+
+                        reader = PdfReader(target)
+                        if start_page > len(reader.pages):
+                            raise ValueError(f"start_page exceeds the document's {len(reader.pages)} pages")
+                        result = "\n\n".join(
+                            f"[Page {index + 1}]\n{reader.pages[index].extract_text() or ''}"
+                            for index in range(start_page - 1, min(end_page or len(reader.pages), len(reader.pages)))
+                        )
+                    elif target.suffix.lower() == ".docx":
+                        if start_page != 1 or end_page not in (None, 1):
+                            raise ValueError("DOCX has no reliable page layout; use start_page=1 and end_page=None")
+                        from docx import Document
+
+                        document = Document(target)
+                        result = "\n".join([
+                            *(paragraph.text for paragraph in document.paragraphs),
+                            *("\t".join(cell.text for cell in row.cells)
+                              for table in document.tables for row in table.rows),
+                        ])
+                    else:
+                        pages = target.read_text(encoding="utf-8").split("\f")
+                        if start_page > len(pages):
+                            raise ValueError(f"start_page exceeds the document's {len(pages)} pages")
+                        result = "\f".join(pages[start_page - 1:end_page])
                 case "write_file":
                     target = resolve(arguments["file_path"])
                     with target.open("a" if arguments["append"] else "w", encoding="utf-8") as file:
@@ -111,7 +154,8 @@ def create_file_management_tools(
                 case _:
                     raise ValueError(f"Unknown file operation: {tool_name}")
             LOGGER.info("Workspace file operation completed (tool=%s)", tool_name)
-            return truncate_output(result, max_output_chars)
+            limit = READ_LIMITS[arguments["mode"]] if tool_name == "read_file" else max_output_chars
+            return truncate_output(result, limit)
         except Exception as exc:
             LOGGER.error("Workspace file operation failed (tool=%s, exception=%s)", tool_name, type(exc).__name__)
             raise ToolError.from_exception(
@@ -161,9 +205,21 @@ def create_file_management_tools(
 
     @tool("read_file")
     @log_call
-    def read_file(file_path: str) -> str:
-        """Read a UTF-8 text file from the configured workspace."""
-        return invoke_file_tool("read_file", {"file_path": file_path})
+    def read_file(
+        file_path: str,
+        start_page: int = 1,
+        end_page: int | None = None,
+        mode: Literal["small", "standard", "expanded", "deep"] = "standard",
+    ) -> str:
+        """Read PDF, DOCX or UTF-8 text from the configured workspace.
+
+        Page bounds are inclusive and one-based; text pages use form-feed separators.
+        DOCX returns paragraphs/tables without page layout; keep the default page range.
+        Output budgets: small=2000, standard=6000, expanded=12000, deep=30000 characters.
+        """
+        return invoke_file_tool("read_file", {
+            "file_path": file_path, "start_page": start_page, "end_page": end_page, "mode": mode,
+        })
 
     @tool("write_file")
     @log_call

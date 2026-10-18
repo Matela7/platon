@@ -43,6 +43,10 @@ dependencies = [
     "python-dotenv==1.2.1",
 ]
 
+[project.scripts]
+# Terminal CLI entry point. The browser UI keeps its existing run_agent_chat_ui.py launcher.
+platon = "platon.run_agent_chat:main"
+
 [build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"

@@ -18,8 +18,8 @@ DEFAULT_EMBEDDING_DEVICE = "cpu"
 
 _MODEL_LOAD_LOCK = RLock()
 
-@log_call
 @lru_cache(maxsize=1)
+@log_call
 def _load_embedding_model(
     model_name: str,
     device: str,
@@ -79,3 +79,15 @@ def embedding_model_cache_info() -> Any:
     """Expose cache statistics for diagnostics."""
     with _MODEL_LOAD_LOCK:
         return _load_embedding_model.cache_info()
+
+
+@lru_cache(maxsize=1)
+def _load_reranking_model():
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1", device="cpu")
+
+
+def get_reranking_model():
+    """Load the optional multilingual reranker once, only on explicit use."""
+    with _MODEL_LOAD_LOCK:
+        return _load_reranking_model()

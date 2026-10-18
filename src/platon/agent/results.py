@@ -33,35 +33,68 @@ def final_answer(messages: list[BaseMessage]) -> str:
     return ""
 
 
+def _tool_output(message: ToolMessage) -> Any:
+    output = message.artifact if message.artifact is not None else content_text(message.content)
+    if isinstance(output, str):
+        try:
+            return json.loads(output)
+        except (ValueError, TypeError):
+            pass
+    return output
+
+
+def _tool_status(message: ToolMessage) -> str:
+    output = _tool_output(message)
+    if message.status == "error":
+        return "error"
+    return output.get("status", message.status) if isinstance(output, dict) else message.status
+
+
 def execution_report(messages: list[BaseMessage], error: Exception | None = None) -> dict[str, Any]:
     turn = current_turn(messages)
     evidence = []
     errors = []
+    call_args = {
+        call["id"]: call.get("args", {})
+        for message in turn if isinstance(message, AIMessage)
+        for call in message.tool_calls
+    }
     for index, message in enumerate(turn):
         if not isinstance(message, ToolMessage):
             continue
-        output = message.artifact if message.artifact is not None else content_text(message.content)
-        if isinstance(output, str):
-            try:
-                output = json.loads(output)
-            except (ValueError, TypeError):
-                pass
-        status = output.get("status", message.status) if isinstance(output, dict) else message.status
+        output = _tool_output(message)
+        status = _tool_status(message)
         evidence.append({"tool": message.name, "status": status, "output": output})
-        if message.status == "error":
+        if status in {"error", "partial"}:
             tool_errors = ((output.get("errors", []) if isinstance(output, dict) else [])
-                           or [{"message": content_text(message.content)}])
+                           or [{"message": "Delegated work is incomplete." if status == "partial"
+                               else content_text(message.content) or "Tool failed."}])
             # Invalid arguments execute nothing. A corrected, successful call resolves them;
             # preserve the failed call in evidence without reporting a failed final task.
             recovered_validation = all(isinstance(item, dict) and item.get("category") == "validation" for item in tool_errors) and any(
-                isinstance(later, ToolMessage) and later.name == message.name and later.status != "error"
-                and (not isinstance(later.artifact, dict) or later.artifact.get("status") not in {"error", "partial"})
+                isinstance(later, ToolMessage) and later.name == message.name
+                and _tool_status(later) not in {"error", "partial"}
                 for later in turn[index + 1:]
             )
-            if not recovered_validation:
+            # Searching a collection before it is ingested can fail legitimately.
+            # A later successful search of that same collection resolves the lookup,
+            # even when the tool encoded the failure in a successful ToolMessage.
+            failed_args = call_args.get(message.tool_call_id, {})
+            recovered_lookup = (
+                message.name == "search_collection"
+                and isinstance(failed_args, dict)
+                and bool(failed_args.get("collection_name"))
+                and all(isinstance(item, dict) and item.get("category") == "lookup" for item in tool_errors)
+                and any(
+                    isinstance(later, ToolMessage)
+                    and later.name == "search_collection"
+                    and _tool_status(later) not in {"error", "partial"}
+                    and call_args.get(later.tool_call_id, {}).get("collection_name") == failed_args["collection_name"]
+                    for later in turn[index + 1:]
+                )
+            )
+            if not (recovered_validation or recovered_lookup):
                 errors.extend(tool_errors)
-        elif isinstance(output, dict) and output.get("status") in {"partial", "error"}:
-            errors.extend(output.get("errors", []) or [{"message": "Delegated work is incomplete."}])
     if error is not None:
         errors.append(error_details(error))
     answer = final_answer(messages) if error is None else ""

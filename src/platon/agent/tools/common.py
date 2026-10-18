@@ -13,7 +13,7 @@ def configure_error_handling(tool_instance: BaseTool) -> BaseTool:
     def report_error(exc):
         exc.retry_safe = tool_instance.name in {
             "search_web", "http_get", "search_collection", "search_all_collections",
-            "get_list_of_collections", "read_file", "file_search", "list_directory", "ls", "glob",
+            "get_list_of_collections", "get_collection_info", "read_file", "file_search", "list_directory", "ls", "glob",
         }
         return json.dumps({"status": "error", "errors": [error_details(exc)]}, ensure_ascii=False)
 
