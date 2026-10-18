@@ -8,14 +8,14 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from agent.tools.tools import create_web_search_tools
-from embedding_models import (
+from platon.agent.tools.web import create_web_search_tools
+from platon.embedding_models import (
     clear_embedding_model_cache,
     get_embedding_model,
 )
-from websearch.utils import canonicalize_url
-from websearch.websearch_module import WebSearch, rank_results
-from websearch.websearch_parameters import WebSearchParameters
+from platon.websearch.utils import canonicalize_url
+from platon.websearch.websearch_module import WebSearch, rank_results
+from platon.websearch.websearch_parameters import WebSearchParameters
 
 
 class FakeEmbeddingModel:
@@ -74,7 +74,7 @@ class WebSearchTests(unittest.TestCase):
         ]
 
         with patch(
-            "websearch.websearch_module.get_embedding_model",
+            "platon.websearch.websearch_module.get_embedding_model",
             return_value=model,
         ):
             ranked = rank_results("direct answer", results, top_k=5)
@@ -103,7 +103,7 @@ class WebSearchTests(unittest.TestCase):
         clear_embedding_model_cache()
         try:
             with patch(
-                "embedding_models.SentenceTransformer",
+                "platon.embedding_models.SentenceTransformer",
                 side_effect=construct_model,
             ) as constructor:
                 with ThreadPoolExecutor(max_workers=8) as executor:
@@ -134,7 +134,7 @@ class WebSearchTests(unittest.TestCase):
         clear_embedding_model_cache()
         try:
             with patch(
-                "embedding_models.SentenceTransformer",
+                "platon.embedding_models.SentenceTransformer",
                 side_effect=[meta_error, fake_model],
             ) as constructor:
                 loaded_model = get_embedding_model()
@@ -153,7 +153,7 @@ class WebSearchTests(unittest.TestCase):
         ]
 
         with patch(
-            "websearch.websearch_module.rank_results",
+            "platon.websearch.websearch_module.rank_results",
             return_value=[{"title": "One", "rank": 1}],
         ) as rerank:
             results = web_search.search()
@@ -168,7 +168,7 @@ class WebSearchTests(unittest.TestCase):
 
     def test_agent_search_tool_uses_websearch_module(self) -> None:
         search_tool = create_web_search_tools()[0]
-        with patch("websearch.websearch_module.WebSearch") as web_search_class:
+        with patch("platon.websearch.websearch_module.WebSearch") as web_search_class:
             web_search_class.return_value.search.return_value = [{"rank": 1}]
             response = search_tool.invoke({"query": "current LangChain release"})
 

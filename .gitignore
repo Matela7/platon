@@ -7,3 +7,10 @@ chroma_data/
 *.pdf
 .DS_Store
 *.github/
+
+build/
+dist/
+*.egg-info/
+
+.platon/
+agent_threads.sqlite3*

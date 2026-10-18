@@ -12,13 +12,13 @@ from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from agent.agent_orchestrator import AgentOrchestrator
-from agent.base_agent import BaseAgent
-from agent.agents.supervisor_agent import SupervisorAgent
-from agent.models.agent_config import AgentConfig
-from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
-from agent.results import final_answer
-from agent.cancellation import current_stop_event
+from platon.agent.agent_orchestrator import AgentOrchestrator
+from platon.agent.base_agent import BaseAgent
+from platon.agent.agents.supervisor_agent import SupervisorAgent
+from platon.agent.models.agent_config import AgentConfig
+from platon.agent.models.agent_orchestrator_config import AgentOrchestratorConfig
+from platon.agent.results import final_answer
+from platon.agent.cancellation import current_stop_event
 from tests.test_agent_workflows import ScriptedModel, call
 
 

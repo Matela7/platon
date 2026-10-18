@@ -13,19 +13,19 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from agent.adapters import AgentToolAdapter
-from agent.agents import (
+from platon.agent.adapters import AgentToolAdapter
+from platon.agent.agents import (
     CodingAgent,
     DatabaseAgent,
     ResearchAgent,
     SupervisorAgent,
 )
-from agent.base_agent import BaseAgent
-from agent.deep_agent import DeepAgent
-from agent.models.agent_config import AgentConfig
-from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
-from agent.prompt_loader import load_prompt
-from vectorstore.client_manager import ClientManager
+from platon.agent.base_agent import BaseAgent
+from platon.agent.deep_agent import DeepAgent
+from platon.agent.models.agent_config import AgentConfig
+from platon.agent.models.agent_orchestrator_config import AgentOrchestratorConfig
+from platon.agent.prompt_loader import load_prompt
+from platon.vectorstore.client_manager import ClientManager
 
 
 class FakeClientManager:
@@ -137,7 +137,7 @@ class AgentArchitectureTests(unittest.TestCase):
             "get_list_of_collections",
             "add_document_to_collection",
         }
-        self.assertEqual(names["database"], rag_names)
+        self.assertEqual(names["database"], rag_names | {"ls", "glob"})
         self.assertTrue(rag_names.isdisjoint(names["research"]))
         self.assertTrue(rag_names.isdisjoint(names["coding"]))
 

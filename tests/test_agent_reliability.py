@@ -14,17 +14,20 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from agent.adapters.delegation import AgentToolAdapter
-from agent.agents.supervisor_agent import SupervisorAgent
-from agent.base_agent import BaseAgent
-from agent.models.agent_config import AgentConfig
-from agent.context import bounded_messages
-from agent.results import execution_report
-from agent.cancellation import RunStopped, StopHandler
-from agent.tools.tools import create_execution_tools, create_file_management_tools, create_rag_tools
+from platon.agent.adapters.delegation import AgentToolAdapter
+from platon.agent.agents.supervisor_agent import SupervisorAgent
+from platon.agent.base_agent import BaseAgent
+from platon.agent.models.agent_config import AgentConfig
+from platon.agent.context import bounded_messages
+from platon.agent.results import execution_report
+from platon.agent.cancellation import RunStopped, StopHandler
+from platon.agent.tools.execution import create_execution_tools
+from platon.agent.tools.file_management import create_file_management_tools
+from platon.agent.tools.rag import create_rag_tools
 from tests.test_agent_workflows import ScriptedModel, call
-from vectorstore.client_manager import ClientManager
-from vectorstore.collection_store import CollectionStore
+from platon.vectorstore.client_manager import ClientManager
+from platon.vectorstore.collection_store import CollectionStore
+from platon.vectorstore.errors import VectorStoreError
 
 
 class RecordingWorker(BaseAgent):
@@ -152,7 +155,7 @@ class ReliabilityTests(unittest.TestCase):
             self.assertIn("boom", failure.content)
             shell = tools["run_shell"].invoke({"command":"echo shell-ok"})
             self.assertIn("shell-ok", shell)
-            with patch("agent.tools.tools.subprocess.run", side_effect=subprocess.TimeoutExpired("python", 1, output=b"first step completed")):
+            with patch("platon.agent.tools.execution.subprocess.run", side_effect=subprocess.TimeoutExpired("python", 1, output=b"first step completed")):
                 timeout = json.loads(tools["run_python"].invoke({"code":"long task"}))
             self.assertIn("first step completed", str(timeout["errors"][0]["partial_results"]))
             self.assertFalse(timeout["errors"][0]["retryable"])
@@ -160,8 +163,9 @@ class ReliabilityTests(unittest.TestCase):
     def test_retrieval_does_not_create_missing_collection(self):
         client = Mock()
         client.get_collection.side_effect = LookupError("missing collection")
-        with self.assertRaises(LookupError):
+        with self.assertRaises(VectorStoreError) as raised:
             CollectionStore(client,"missing").search("query")
+        self.assertIsInstance(raised.exception.__cause__, LookupError)
         client.get_or_create_collection.assert_not_called()
 
     def test_collection_failure_preserves_previous_collection_results(self):

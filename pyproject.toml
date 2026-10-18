@@ -43,5 +43,13 @@ dependencies = [
     "python-dotenv==1.2.1",
 ]
 
-[tool.uv]
-package = false
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["platon*"]
+
+[tool.setuptools.package-data]
+"platon.agent" = ["prompts/*.md", "prompts/agents/*.md"]

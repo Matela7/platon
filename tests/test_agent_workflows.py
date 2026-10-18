@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import Mock, patch
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -13,9 +14,11 @@ from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from agent.agent_orchestrator import AgentOrchestrator
-from agent.agents import CodingAgent, DatabaseAgent, ResearchAgent, SupervisorAgent
-from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
+from platon.agent.agent_orchestrator import AgentOrchestrator
+from platon.agent.agents import CodingAgent, DatabaseAgent, ResearchAgent, SupervisorAgent
+from platon.agent.models.agent_orchestrator_config import AgentOrchestratorConfig
+from platon.agent.models.agent_config import AgentConfig
+from platon.agent.tools.file_management import create_document_discovery_tools
 
 
 class ScriptedModel(FakeMessagesListChatModel):
@@ -37,6 +40,75 @@ def fake_tool(name: str, calls: list[str]) -> StructuredTool:
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_document_discovery_accepts_virtual_alias_without_leaving_documents(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents"
+            nested = documents / "nested"
+            nested.mkdir(parents=True)
+            pdf = nested / "example.pdf"
+            pdf.write_bytes(b"%PDF-1.4")
+            tools = {t.name: t for t in create_document_discovery_tools(documents)}
+            self.assertEqual(tools["ls"].invoke({"path": "/documents"}), str(nested))
+            self.assertEqual(tools["ls"].invoke({"path": "/documents/nested"}), str(pdf))
+            self.assertEqual(tools["glob"].invoke({
+                "pattern": "**/*.pdf", "path": "/documents",
+            }), str(pdf))
+            self.assertIn("outside the documents directory", tools["ls"].invoke({
+                "path": "/documents/..",
+            }))
+
+    def test_database_exposes_only_rag_and_discovery_and_searches_after_ingestion(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents"
+            documents.mkdir()
+            pdf = documents / "example.pdf"
+            pdf.write_bytes(b"%PDF-1.4")
+            manager = Mock()
+            manager.add_document_to_collection.return_value = True
+            manager.search.return_value = [{
+                "document": "Verified passage", "metadata": {"name": pdf.name, "page": 2},
+            }]
+            model = ScriptedModel(responses=[
+                call("ls", "discover", path="/documents"),
+                call("add_document_to_collection", "ingest", collection_name="books",
+                     file_path=str(pdf), doc_name=pdf.name),
+                call("search_collection", "retrieve", collection_name="books", query="compare"),
+                AIMessage(content="Answer based on the retrieved passage."),
+            ])
+            agent = DatabaseAgent(
+                model, manager, config=AgentConfig(backend_root=root),
+                checkpointer=InMemorySaver(),
+            )
+            exposed = []
+
+            def bind_tools(model, tools, **kwargs):
+                exposed.append([tool.name for tool in tools])
+                return model
+
+            run_config = {"configurable": {"thread_id": "database-rag"}}
+            with patch.object(ScriptedModel, "bind_tools", side_effect=bind_tools, autospec=True):
+                result = agent.invoke("Analyze example.pdf using books", config=run_config)
+                self.assertIn("__interrupt__", result)
+                manager.add_document_to_collection.assert_not_called()
+                result = agent.invoke(Command(resume={
+                    "decisions": [{"type": "approve"}],
+                }), config=run_config)
+            expected_tools = {
+                "ls", "glob", "search_collection", "search_all_collections",
+                "get_list_of_collections", "add_document_to_collection",
+            }
+            self.assertTrue(exposed)
+            for names in exposed:
+                self.assertEqual(set(names), expected_tools)
+                self.assertEqual(len(names), len(expected_tools))
+            manager.add_document_to_collection.assert_called_once_with("books", str(pdf), pdf.name)
+            manager.search.assert_called_once_with("books", "compare", 5)
+            self.assertEqual(result["messages"][-1].content, "Answer based on the retrieved passage.")
+            self.assertIn("Verified passage", str(result["messages"]))
+            self.assertFalse((root / "shared").exists())
+
     def test_coding_restart_resumes_nested_review_without_repeating_reads(self) -> None:
         reads: list[str] = []
         writes: list[str] = []

@@ -14,10 +14,10 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from langchain_core.messages import AIMessage
 
-from agent.agent_orchestrator import AgentOrchestrator
-from agent.base_agent import BaseAgent
-from agent.models.agent_orchestrator_config import AgentOrchestratorConfig
-from backend.agent_chat_ui import STATE, create_app, _build_ui_html
+from platon.agent.agent_orchestrator import AgentOrchestrator
+from platon.agent.base_agent import BaseAgent
+from platon.agent.models.agent_orchestrator_config import AgentOrchestratorConfig
+from platon.backend.agent_chat_ui import STATE, create_app, _build_ui_html
 from tests.test_agent_workflows import ScriptedModel
 
 
@@ -81,7 +81,7 @@ class FakeAgent:
 class AgentChatUiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.agent = FakeAgent()
-        self.patcher = patch("backend.agent_chat_ui._build_agent", side_effect=lambda thread_id=None: self.agent if thread_id is None else FakeAgent(thread_id))
+        self.patcher = patch("platon.backend.agent_chat_ui._build_agent", side_effect=lambda thread_id=None: self.agent if thread_id is None else FakeAgent(thread_id))
         self.patcher.start()
         self.client = TestClient(TestServer(create_app()))
         await self.client.start_server()
@@ -173,7 +173,7 @@ class AgentChatUiTests(unittest.IsolatedAsyncioTestCase):
                 config=AgentOrchestratorConfig(sqlite_path=Path(directory)/"chat.sqlite3"),
                 agent=BaseAgent(ScriptedModel(responses=[AIMessage(content="Real graph answer")]), prompt="test"),
             )
-            with patch("backend.agent_chat_ui._build_agent", return_value=agent):
+            with patch("platon.backend.agent_chat_ui._build_agent", return_value=agent):
                 client = TestClient(TestServer(create_app()))
             await client.start_server()
             try:

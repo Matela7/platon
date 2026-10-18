@@ -5,15 +5,11 @@ import os
 
 from aiohttp import web
 
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    def load_dotenv() -> bool:
-        return False
+from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=".env")
 
-from backend.agent_chat_ui import create_app
+from platon.backend.agent_chat_ui import create_app
 
 
 def main() -> int:
