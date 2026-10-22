@@ -12,7 +12,7 @@ from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from platon.agent.agent_orchestrator import AgentOrchestrator
+from platon.agent.agent_orchestrator import AgentOrchestrator, _duration_seconds
 from platon.agent.base_agent import BaseAgent
 from platon.agent.agents.supervisor_agent import SupervisorAgent
 from platon.agent.models.agent_config import AgentConfig
@@ -23,6 +23,10 @@ from tests.test_agent_workflows import ScriptedModel, call
 
 
 class AgentOrchestratorTests(unittest.TestCase):
+    def test_optional_ollama_durations_are_safe(self):
+        self.assertEqual(_duration_seconds(None), 0.0)
+        self.assertEqual(_duration_seconds(2_000_000_000), 2.0)
+
     def test_invalid_delegation_is_corrected_without_exposing_schema_as_final_error(self):
         worker = BaseAgent(ScriptedModel(responses=[AIMessage(content="Ustalenia ze źródłem")]), prompt="test")
         supervisor = SupervisorAgent(ScriptedModel(responses=[

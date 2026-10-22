@@ -500,10 +500,11 @@ def _build_ui_html() -> str:
     }
 
     function updateControls() {
-      prompt.disabled = !ready;
-      send.disabled = !ready;
-      prompt.placeholder = busy || unfinishedRun || pendingReviews.length
-        ? "Dodaj wiadomość do kolejki..." : "Napisz do Platona...";
+      prompt.disabled = !ready || pendingReviews.length > 0;
+      send.disabled = !ready || pendingReviews.length > 0;
+      prompt.placeholder = pendingReviews.length
+        ? "Najpierw odpowiedz w formularzu powyżej..."
+        : busy || unfinishedRun ? "Dodaj wiadomość do kolejki..." : "Napisz do Platona...";
       stopButton.disabled = stopRequested || !(busy || remoteRunning || unfinishedRun || pendingReviews.length);
       document.getElementById("new-chat").disabled = busy || messageQueue.length > 0;
       queuePanel.hidden = messageQueue.length === 0;
@@ -762,6 +763,7 @@ def _build_ui_html() -> str:
       unfinishedRun = Boolean(payload.can_retry);
       remoteRunning = Boolean(payload.running);
       updateControls();
+      if (payload.interrupts?.length) renderReviews(payload.interrupts);
       renderConversations(payload.conversations);
       if (payload.can_retry && !document.getElementById("unfinished")) {
         showOutcome({ status: "partial", errors: [{message: "An unfinished run can be continued from its checkpoint."}], can_retry: true });
@@ -854,6 +856,10 @@ def _build_ui_html() -> str:
       event.preventDefault();
       const text = prompt.value.trim();
       if (!text || !ready) return;
+      if (pendingReviews.length) {
+        meta.textContent = "Najpierw odpowiedz na oczekujące pytanie lub decyzję powyżej.";
+        return;
+      }
       if (queuePaused && !busy && !messageQueue.length) queuePaused = false;
       messageQueue.push(text);
       prompt.value = "";

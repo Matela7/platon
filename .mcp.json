@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@artymclabin/gmail-mcp@1.2.3"]
+    }
+  }
+}

@@ -21,7 +21,7 @@ class AgentConfig(BaseModel):
         reasoning: Enable Ollama thinking for models that support it.
     """
 
-    model_name: str = "ornith-1.5:35b"
+    model_name: str = "gemma4:26b-a4b-it-qat"
     model_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     system_prompt: str = "react_prompt.md"
     max_history_messages: int = Field(default=24, ge=1)
@@ -29,7 +29,7 @@ class AgentConfig(BaseModel):
     keep_alive: str | int = "30m"
     num_ctx: int = Field(default=16_384, ge=1)
     reasoning: bool = False
-    debug: bool = False
+    debug: bool = True
     research_tool_limit: int = Field(default=6, ge=1)
     coding_tool_limit: int = Field(default=15, ge=1)
     database_tool_limit: int = Field(default=8, ge=1)

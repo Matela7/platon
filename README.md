@@ -23,7 +23,8 @@ The project is being developed as part of an engineering thesis titled **“Desi
 - Dynamic decision between a direct answer and specialist delegation.
 - Semantic search over persistent ChromaDB collections.
 - Ingestion of text-based PDF, DOCX, and TXT documents.
-- Separate supervisor, document, research, and coding responsibilities.
+- Separate supervisor, document, research, coding, and Gmail responsibilities.
+- Optional Gmail integration through a stdio MCP server with explicit tool filtering and human approval for mutations.
 - Streaming responses and tool progress in the web interface.
 - Persistent conversation history and LangGraph checkpoints in SQLite.
 - Human approval before sensitive actions such as document ingestion, file mutation, command execution, or HTTP POST.
@@ -41,10 +42,12 @@ flowchart LR
     S -->|public or current information| R[Research Agent]
     S -->|workspace task| C[Coding Agent]
     S -->|private documents| D[Database Agent]
+    S -->|email tasks| G[Gmail Agent]
     S -->|no tools required| A[Direct answer]
     R --> W[Web search and HTTP]
     C --> F[Workspace files and local execution]
     D --> V[ChromaDB]
+    G --> X[Gmail MCP server]
     V --> E[Local embedding model]
     O <--> P[(SQLite history and checkpoints)]
     S <--> M[Local skills and memory]
@@ -56,6 +59,7 @@ The system follows a supervisor–specialist pattern:
 - **Database Agent** is the only specialist with access to the private vector store. It discovers documents, ingests them after approval, searches one or all collections, and returns document metadata with retrieved fragments.
 - **Research Agent** searches public sources and reads HTTP resources when the request requires current or external information. It cannot access private collections or workspace files.
 - **Coding Agent** reads and modifies workspace files, performs calculations, and runs local commands. It cannot browse the web or query the private document database.
+- **Gmail Agent** uses the configured Gmail MCP server for narrowly delegated email work. Read-only tools are allow-listed; sending, drafts, replies, labels, attachments, and unknown tools require human approval.
 
 This separation limits unnecessary data exposure and gives each specialist only the tools required by its role.
 
@@ -66,7 +70,8 @@ This separation limits unnecessary data exposure and gives each specialist only 
 3. The supervisor analyses the intent and either answers directly or delegates the task.
 4. If private document knowledge is required, the Database Agent selects a collection and performs semantic retrieval.
 5. Retrieved chunks, similarity scores, and metadata such as document name and page number are returned as evidence.
-6. The supervisor prepares the final response and the application stores the visible history and execution checkpoint.
+6. For email tasks, the supervisor delegates to Gmail Agent, which discovers tools from the configured MCP server and pauses before mutations.
+7. The supervisor prepares the final response and the application stores the visible history and execution checkpoint.
 
 Dependent specialist calls are executed in sequence so that, for example, research or database findings can be passed to the Coding Agent when an output file must be created.
 
@@ -147,7 +152,7 @@ Create a `.env` file in the repository root. A minimal configuration is:
 
 ```dotenv
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=ornith-1.5:35b
+OLLAMA_MODEL=gemma4:26b-a4b-it-qat
 OLLAMA_NUM_CTX=16384
 CHROMA_PERSIST_DIR=./chroma_data
 AGENT_BACKEND_ROOT=./.platon/agent
@@ -161,7 +166,7 @@ PLATON_LOG_LEVEL=INFO
 | Variable | Purpose | Default |
 |---|---|---|
 | `OLLAMA_BASE_URL` | Ollama API address | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Supervisor model | `ornith-1.5:35b` |
+| `OLLAMA_MODEL` | Supervisor model | `gemma4:26b-a4b-it-qat` |
 | `OLLAMA_NUM_CTX` | Requested model context window | `16384` |
 | `CHROMA_PERSIST_DIR` | ChromaDB persistence directory | `./chroma_data` |
 | `AGENT_BACKEND_ROOT` | Virtual filesystem, skills, memory, and document root | `./.platon/agent` |
@@ -174,6 +179,25 @@ PLATON_LOG_LEVEL=INFO
 | `PLATON_LOG_LEVEL` | Application log level | `INFO` |
 
 The specialist model is currently configured in `AgentConfig.subagent_model_name`, rather than through an environment variable.
+
+### Optional Gmail integration
+
+Gmail support is disabled unless a local `.mcp.json` file configures an MCP server named `gmail`. The repository includes a stdio example that launches `@artymclabin/gmail-mcp@1.2.3` with `npx`; the server package and its OAuth flow are external to Platon. Start with the checked-in shape:
+
+```json
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@artymclabin/gmail-mcp@1.2.3"]
+    }
+  }
+}
+```
+
+Authenticate the Gmail MCP server according to its own documentation before delegating the first email task. Do not put OAuth tokens, client secrets, passwords, or personal credentials in `.mcp.json`; keep them in the server's supported local credential store or environment and out of version control. Platon starts the server lazily, discovers its tools, and supports only stdio transport. `allowedTools` and `disabledTools` can restrict exposure, but cannot be used together.
+
+Gmail reads are allow-listed. Sending, replies, draft creation, label/filter changes, attachment downloads, and any unknown tool require an approval decision in the UI. Email bodies are untrusted input; never approve an action solely because an email asks for it.
 
 ## Running the application
 
@@ -223,7 +247,7 @@ By default, application data remains local:
 | `.platon/agent/memory/` | Persistent file-backed agent memory |
 | `.platon/agent/skills/` | Local agent skills |
 
-Private RAG content is not sent to a hosted LLM when Ollama runs locally. Network traffic can still occur when the Research Agent is used, when remote Ollama is configured, or during initial model downloads. The Coding Agent's shell and Python tools execute on the host and are not a security sandbox; review approval prompts carefully.
+Private RAG content is not sent to a hosted LLM when Ollama runs locally. Network traffic can still occur when the Research Agent is used, when remote Ollama is configured, during initial model downloads, or when Gmail MCP is enabled. Gmail data is shared with the configured external MCP server and its provider under that provider's terms. The Coding Agent's shell and Python tools execute on the host and are not a security sandbox; review approval prompts carefully.
 
 ## Tests
 
@@ -291,7 +315,8 @@ Projekt powstaje w ramach pracy inżynierskiej **„Projekt i implementacja syst
 - Dynamiczny wybór pomiędzy odpowiedzią bezpośrednią a delegacją do specjalisty.
 - Wyszukiwanie semantyczne w trwałych kolekcjach ChromaDB.
 - Indeksowanie tekstowych dokumentów PDF, DOCX i TXT.
-- Rozdzielenie odpowiedzialności supervisora oraz agentów dokumentowego, badawczego i programistycznego.
+- Rozdzielenie odpowiedzialności supervisora oraz agentów dokumentowego, badawczego, programistycznego i Gmail.
+- Opcjonalna integracja z Gmailem przez serwer MCP stdio, z jawnym filtrowaniem narzędzi i zgodą użytkownika na mutacje.
 - Strumieniowanie odpowiedzi i postępu narzędzi w interfejsie webowym.
 - Historia rozmów i checkpointy LangGraph zapisywane w SQLite.
 - Zgoda użytkownika przed operacjami wrażliwymi, m.in. indeksowaniem dokumentów, modyfikacją plików, wykonaniem poleceń i żądaniami HTTP POST.
@@ -309,10 +334,12 @@ flowchart LR
     S -->|wiedza publiczna i aktualna| R[Research Agent]
     S -->|praca na plikach| C[Coding Agent]
     S -->|prywatne dokumenty| D[Database Agent]
+    S -->|zadania email| G[Gmail Agent]
     S -->|narzędzia zbędne| A[Odpowiedź bezpośrednia]
     R --> W[Wyszukiwarka i HTTP]
     C --> F[Pliki i lokalne procesy]
     D --> V[ChromaDB]
+    G --> X[Serwer Gmail MCP]
     V --> E[Lokalny model embeddingowy]
     O <--> P[(Historia i checkpointy SQLite)]
     S <--> M[Lokalne umiejętności i pamięć]
@@ -324,6 +351,7 @@ System wykorzystuje wzorzec supervisor–specjaliści:
 - **Database Agent** jako jedyny ma dostęp do prywatnej bazy wektorowej. Odkrywa dokumenty, po zatwierdzeniu je indeksuje, przeszukuje jedną lub wszystkie kolekcje i zwraca fragmenty wraz z metadanymi.
 - **Research Agent** wyszukuje źródła publiczne i odczytuje zasoby HTTP, gdy potrzebne są informacje aktualne lub zewnętrzne. Nie ma dostępu do prywatnych kolekcji ani plików projektu.
 - **Coding Agent** odczytuje i modyfikuje pliki obszaru roboczego, wykonuje obliczenia oraz lokalne polecenia. Nie może przeszukiwać Internetu ani prywatnej bazy dokumentów.
+- **Gmail Agent** korzysta ze skonfigurowanego serwera Gmail MCP przy ograniczonych zadaniach pocztowych. Narzędzia tylko do odczytu są jawnie dozwolone, a wysyłka, drafty, odpowiedzi, etykiety, załączniki i nieznane narzędzia wymagają zgody użytkownika.
 
 Takie rozdzielenie ogranicza niepotrzebny dostęp do danych i udostępnia każdemu specjaliście wyłącznie narzędzia potrzebne do jego roli.
 
@@ -334,7 +362,8 @@ Takie rozdzielenie ogranicza niepotrzebny dostęp do danych i udostępnia każde
 3. Supervisor analizuje intencję i odpowiada samodzielnie albo deleguje zadanie.
 4. Gdy potrzebna jest wiedza z prywatnych dokumentów, Database Agent wybiera kolekcję i wykonuje wyszukiwanie semantyczne.
 5. Odnalezione fragmenty, podobieństwo oraz metadane, takie jak nazwa dokumentu i numer strony, wracają jako materiał dowodowy.
-6. Supervisor przygotowuje odpowiedź, a aplikacja zapisuje historię widoczną dla użytkownika oraz checkpoint wykonania.
+6. W przypadku poczty supervisor deleguje zadanie do Gmail Agenta, który odkrywa narzędzia skonfigurowanego serwera MCP i zatrzymuje się przed mutacjami.
+7. Supervisor przygotowuje odpowiedź, a aplikacja zapisuje historię widoczną dla użytkownika oraz checkpoint wykonania.
 
 Zależne wywołania specjalistów są wykonywane kolejno. Dzięki temu wyniki wyszukiwania publicznego lub RAG mogą zostać przekazane np. do Coding Agenta, jeśli trzeba utworzyć plik wynikowy.
 
@@ -441,6 +470,25 @@ PLATON_LOG_LEVEL=INFO
 
 Model specjalistów jest obecnie ustawiany w `AgentConfig.subagent_model_name`, a nie przez zmienną środowiskową.
 
+### Opcjonalna integracja z Gmailem
+
+Obsługa Gmaila jest wyłączona, dopóki lokalny plik `.mcp.json` nie skonfiguruje serwera MCP o nazwie `gmail`. Repozytorium zawiera przykład transportu stdio uruchamiającego `@artymclabin/gmail-mcp@1.2.3` przez `npx`; pakiet serwera i jego proces OAuth są zewnętrzne wobec Platona. Zacznij od następującego kształtu:
+
+```json
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@artymclabin/gmail-mcp@1.2.3"]
+    }
+  }
+}
+```
+
+Uwierzytelnij serwer Gmail MCP zgodnie z jego dokumentacją przed pierwszym zadaniem pocztowym. Nie umieszczaj tokenów OAuth, sekretów klienta, haseł ani prywatnych danych logowania w `.mcp.json`; trzymaj je w obsługiwanym przez serwer lokalnym magazynie poświadczeń lub środowisku i poza kontrolą wersji. Platon uruchamia serwer leniwie, odkrywa jego narzędzia i obsługuje tylko transport stdio. `allowedTools` i `disabledTools` mogą ograniczyć udostępniane narzędzia, ale nie mogą być używane jednocześnie.
+
+Odczyt Gmaila jest jawnie dozwolony tylko dla wybranych narzędzi. Wysyłka, odpowiedzi, tworzenie draftów, zmiany etykiet i filtrów, pobieranie załączników oraz każde nieznane narzędzie wymagają decyzji w formularzu zgody. Treść wiadomości jest niezaufanym wejściem; nie zatwierdzaj działania tylko dlatego, że prosi o nie email.
+
 ## Uruchamianie
 
 Uruchom interfejs przeglądarkowy:
@@ -489,7 +537,7 @@ Domyślnie dane aplikacji pozostają lokalne:
 | `.platon/agent/memory/` | Trwała pamięć agenta w plikach |
 | `.platon/agent/skills/` | Lokalne umiejętności agenta |
 
-Treści prywatnego RAG nie są wysyłane do hostowanego modelu, jeśli Ollama działa lokalnie. Ruch sieciowy może jednak wystąpić podczas używania Research Agenta, korzystania ze zdalnej Ollamy lub pierwszego pobierania modeli. Narzędzia powłoki i Pythona Coding Agenta działają bezpośrednio na hoście i nie stanowią izolowanego sandboxa — komunikaty o zatwierdzenie należy czytać uważnie.
+Treści prywatnego RAG nie są wysyłane do hostowanego modelu, jeśli Ollama działa lokalnie. Ruch sieciowy może jednak wystąpić podczas używania Research Agenta, korzystania ze zdalnej Ollamy, pierwszego pobierania modeli lub po włączeniu Gmail MCP. Dane Gmaila są przekazywane skonfigurowanemu zewnętrznemu serwerowi MCP i jego dostawcy zgodnie z ich warunkami. Narzędzia powłoki i Pythona Coding Agenta działają bezpośrednio na hoście i nie stanowią izolowanego sandboxa — komunikaty o zatwierdzenie należy czytać uważnie.
 
 ## Testy
 

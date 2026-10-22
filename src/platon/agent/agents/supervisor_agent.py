@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from typing import Any, Mapping
 
 from langchain.agents.middleware import (
@@ -21,6 +23,7 @@ from platon.agent.prompt_loader import load_prompt
 from platon.agent.tools.interaction import ask_user
 
 from platon.agent.agents.coding_agent import CodingAgent
+from platon.agent.agents.gmail_agent import GmailAgent
 from platon.agent.agents.database_agent import DatabaseAgent
 from platon.agent.agents.research_agent import ResearchAgent
 from platon.agent.agents.skill_creator_agent import SkillCreatorAgent
@@ -152,6 +155,8 @@ class SupervisorAgent(DeepAgent):
                 config=agent_config,
             ),
             "skill_creator": SkillCreatorAgent(model=specialist_model, config=agent_config),
+            "gmail": GmailAgent(model=specialist_model, config=agent_config,
+                                config_path=Path.cwd() / ".mcp.json"),
         }
         return cls(
             model=shared_model,
@@ -161,3 +166,9 @@ class SupervisorAgent(DeepAgent):
             checkpointer=checkpointer,
             subagent_model=subagent_model,
         )
+
+    def close(self):
+        for agent in self.subagents.values():
+            close = getattr(agent, "close", None)
+            if close is not None:
+                close()

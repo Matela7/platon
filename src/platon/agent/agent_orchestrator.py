@@ -21,6 +21,9 @@ from platon.agent.models.agent_orchestrator_config import AgentOrchestratorConfi
 from platon.agent.results import content_text, current_turn, execution_report, visible_messages
 
 MessageHistory = list[dict[str, str]]
+def _duration_seconds(value: object) -> float:
+    """Convert optional Ollama nanosecond metadata to seconds."""
+    return value / 1e9 if isinstance(value, (int, float)) else 0.0
 
 
 class AgentOrchestrator:
@@ -68,7 +71,12 @@ class AgentOrchestrator:
         return self.store.exists(thread_id)
 
     def close(self):
-        self.store.close()
+        try:
+            close = getattr(self.agent, "close", None)
+            if close is not None:
+                close()
+        finally:
+            self.store.close()
 
     def stop(self) -> bool:
         """Request cancellation from another thread; the runner performs cleanup."""
@@ -244,9 +252,9 @@ class AgentOrchestrator:
                 metadata = message.response_metadata
                 LOGGER.info(
                     "Ollama timing (load=%.3fs, prompt=%.3fs, generation=%.3fs, output_tokens=%s)",
-                    metadata.get("load_duration", 0) / 1e9,
-                    metadata.get("prompt_eval_duration", 0) / 1e9,
-                    metadata.get("eval_duration", 0) / 1e9,
+                    _duration_seconds(metadata.get("load_duration")),
+                    _duration_seconds(metadata.get("prompt_eval_duration")),
+                    _duration_seconds(metadata.get("eval_duration")),
                     metadata.get("eval_count", 0),
                 )
                 break

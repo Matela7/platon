@@ -344,7 +344,7 @@ class AgentArchitectureTests(unittest.TestCase):
 
         self.assertEqual(
             list(supervisor.subagents),
-            ["research", "coding", "database", "skill_creator"],
+            ["research", "coding", "database", "skill_creator", "gmail"],
         )
         self.assertIs(supervisor.subagents["research"].config, supervisor.config)
         self.assertIs(supervisor.subagents["coding"].config, supervisor.config)
@@ -356,6 +356,15 @@ class AgentArchitectureTests(unittest.TestCase):
         )
         database_agent = cast(DatabaseAgent, supervisor.subagents["database"])
         self.assertIsNone(database_agent.client_manager._client)
+        gmail_agent = supervisor.subagents["gmail"]
+        self.assertEqual(gmail_agent.mcp.config_path, Path.cwd() / ".mcp.json")
+        gmail_agent.tools_list = [
+            StructuredTool.from_function(lambda query: query, name="get_inbox_with_threads", description="Read inbox"),
+            StructuredTool.from_function(lambda message: message, name="send_email", description="Send email"),
+        ]
+        interrupt_on = gmail_agent._middleware()[3].interrupt_on
+        self.assertNotIn("get_inbox_with_threads", interrupt_on)
+        self.assertIn("send_email", interrupt_on)
 
     def test_chroma_client_is_lazy(self) -> None:
         manager = ClientManager("unused-in-this-test")
