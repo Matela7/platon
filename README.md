@@ -213,6 +213,10 @@ Then open [http://127.0.0.1:8080](http://127.0.0.1:8080). Alternatively, use the
 uv run --locked python -m platon.run_agent_chat
 ```
 
+The UI and CLI check the configured Ollama endpoint before creating the agent
+and start a local `ollama serve` process when needed. Remote endpoints are
+checked but never started locally.
+
 With GNU Make available:
 
 ```powershell
@@ -220,7 +224,8 @@ make build
 make run
 ```
 
-`make run` checks the local Ollama endpoint, starts `ollama serve` when necessary, and launches the web interface.
+`make run` and `make api` check the local Ollama endpoint, start `ollama serve`
+when necessary, and launch the selected application.
 
 ## Working with documents
 

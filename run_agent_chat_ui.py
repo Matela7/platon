@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=".env")
 
 from platon.backend.agent_chat_ui import create_app
+from platon.ollama_runtime import ensure_local_ollama
 
 
 def main() -> int:
     host = os.getenv("AGENT_CHAT_UI_HOST", "127.0.0.1")
     port = int(os.getenv("AGENT_CHAT_UI_PORT", "8080"))
+    ensure_local_ollama()
     web.run_app(create_app(), host=host, port=port)
     return 0
 

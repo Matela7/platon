@@ -1,6 +1,7 @@
 # API AgentRuntimeService
 
-Uruchom `make api`. Swagger: `http://127.0.0.1:8000/docs`.
+Uruchom `make api` (komenda sprawdzi i w razie potrzeby uruchomi lokalną
+Ollamę). Swagger: `http://127.0.0.1:8000/docs`.
 
 Przepływ: router → AgentRuntimeService → AgentOrchestrator.
 Jedna aplikacja utrzymuje jedną instancję serwisu. Wszystkie endpointy mają
