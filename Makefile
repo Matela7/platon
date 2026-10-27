@@ -1,4 +1,4 @@
-.PHONY: build run cli test
+.PHONY: build run cli api test
 
 PYTHON_VERSION ?= 3.13
 
@@ -15,3 +15,6 @@ run:
 
 cli:
 	uv run --locked --python $(PYTHON_VERSION) platon
+
+api:
+	uv run --locked --python $(PYTHON_VERSION) uvicorn platon.backend.app:create_app --factory --host 127.0.0.1 --port 8000 --workers 1

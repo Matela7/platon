@@ -15,7 +15,7 @@ Platon is a local AI assistant designed to search, analyse, compare, and summari
 The project is being developed as part of an engineering thesis titled **“Design and implementation of an agent system for document analysis using a local language model and RAG.”** Its main goals are useful document analysis, transparent tool use, persistent conversations, and keeping private document content on infrastructure controlled by the user.
 
 > [!NOTE]
-> The current application uses an `aiohttp` backend and a responsive browser interface. FastAPI and Electron belong to the proposed/future architecture and are not part of the current implementation.
+> The browser interface uses `aiohttp`. A separate local FastAPI backend is available through `make api`; see [its API guide](docs/fastapi-backend.md). The Electron application remains planned.
 
 ## Key features
 
@@ -307,7 +307,7 @@ Platon to lokalny asystent AI przeznaczony do wyszukiwania, analizowania, porów
 Projekt powstaje w ramach pracy inżynierskiej **„Projekt i implementacja systemu agentowego do analizy dokumentów z wykorzystaniem lokalnego modelu językowego i RAG”**. Główne założenia to skuteczna analiza dokumentów, kontrolowane użycie narzędzi, trwałość konwersacji oraz zachowanie prywatnych treści na infrastrukturze użytkownika.
 
 > [!NOTE]
-> Obecna aplikacja korzysta z backendu `aiohttp` i responsywnego interfejsu przeglądarkowego. FastAPI oraz Electron należą do proponowanej lub przyszłej architektury i nie są jeszcze częścią aktualnej implementacji.
+> Interfejs przeglądarkowy korzysta z `aiohttp`. Osobny lokalny backend FastAPI uruchomisz przez `make api`; zobacz [opis API](docs/fastapi-backend.md). Aplikacja Electron pozostaje planowana.
 
 ## Najważniejsze możliwości
 
