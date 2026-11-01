@@ -23,6 +23,27 @@ from tests.test_agent_workflows import ScriptedModel, call
 
 
 class AgentOrchestratorTests(unittest.TestCase):
+    def test_database_path_defaults_to_backend_root_and_respects_override(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend_root = root / "agent"
+            agent_config = AgentConfig(backend_root=backend_root)
+            for configured, expected in (
+                (None, backend_root / "agent_threads.sqlite3"),
+                (root / "custom.sqlite3", root / "custom.sqlite3"),
+            ):
+                agent = BaseAgent(ScriptedModel(responses=[]), config=agent_config, prompt="test")
+                orchestrator = AgentOrchestrator(
+                    config=AgentOrchestratorConfig(working_dir=root / "workspace", sqlite_path=configured),
+                    agent_config=agent_config,
+                    agent=agent,
+                )
+                try:
+                    db_path = orchestrator.store.connection.execute("PRAGMA database_list").fetchone()[2]
+                    self.assertEqual(Path(db_path), expected.resolve())
+                finally:
+                    orchestrator.close()
+
     def test_optional_ollama_durations_are_safe(self):
         self.assertEqual(_duration_seconds(None), 0.0)
         self.assertEqual(_duration_seconds(2_000_000_000), 2.0)
