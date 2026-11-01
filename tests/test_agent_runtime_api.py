@@ -43,6 +43,23 @@ class AgentRuntimeAPITests(unittest.TestCase):
                 self.assertEqual(client.post(BASE + "/chat", json={"message": " "}).status_code, 422)
                 self.assertEqual(client.get(BASE + "/snapshot").json()["data"]["interrupts"], [])
 
+    def test_threads_endpoint_returns_all_saved_threads(self):
+        service = Mock(spec=AgentRuntimeService)
+        service.thread_id = "current"
+        service.get_config.return_value = {}
+        service.list_threads.return_value = [
+            {"thread_id": "current", "title": "Current"},
+            {"thread_id": "older", "title": "Older"},
+        ]
+        with TestClient(create_app(lambda **kwargs: service)) as client:
+            self.assertEqual(client.post(BASE + "/initialize", json={}).status_code, 200)
+            response = client.get(BASE + "/threads")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                [item["thread_id"] for item in response.json()["data"]],
+                ["current", "older"],
+            )
+
     def test_config_is_passed_directly_and_busy_stream_can_be_stopped(self):
         entered, release = Event(), Event()
         service = Mock(spec=AgentRuntimeService)

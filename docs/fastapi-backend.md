@@ -1,46 +1,50 @@
 # API AgentRuntimeService
 
-Uruchom `make api`. Swagger: `http://127.0.0.1:8000/docs`.
+Run `make api` (the command checks and starts local Ollama when needed).
+Swagger UI is available at `http://127.0.0.1:8000/docs`.
 
-Przepływ: router → AgentRuntimeService → AgentOrchestrator.
-Jedna aplikacja utrzymuje jedną instancję serwisu. Wszystkie endpointy mają
-prefix `/api/v1/agent-runtime`.
+The request flow is router → AgentRuntimeService → AgentOrchestrator.
+One application owns one service instance. All endpoints use the
+`/api/v1/agent-runtime` prefix.
 
-| Metoda | Ścieżka | Działanie |
+| Method | Path | Action |
 |---|---|---|
-| POST | `/initialize` | Utworzenie lub otwarcie runtime z konfiguracją |
-| GET | `/snapshot` | Historia, interrupty, możliwość retry |
-| GET | `/history` | Historia rozmowy |
-| GET | `/threads` | Rozmowy z bieżącej bazy |
-| GET | `/config` | Obie konfiguracje |
-| PUT | `/config` | Zmiana konfiguracji i przebudowanie orchestratora |
-| POST | `/chat` | Wiadomość i bezpośredni stream odpowiedzi |
-| POST | `/resume` | Odpowiedzi na aktualne interrupty |
-| POST | `/retry` | Wznowienie niedokończonej pracy |
-| POST | `/stop` | Sygnał zatrzymania |
-| POST | `/discard` | Odrzucenie oczekującej pracy |
+| POST | `/initialize` | Create or open a runtime with configuration |
+| GET | `/snapshot` | Get history, interrupts, and retry availability |
+| GET | `/history` | Get conversation history |
+| GET | `/threads` | List conversations in the current database |
+| GET | `/config` | Get both configurations |
+| PUT | `/config` | Update configuration and rebuild the orchestrator |
+| POST | `/chat` | Send a message and stream the response |
+| POST | `/resume` | Respond to current interrupts |
+| POST | `/retry` | Resume unfinished work |
+| POST | `/stop` | Request execution to stop |
+| POST | `/discard` | Discard pending work |
 
-Inicjalizacja przyjmuje `agent_config`, `orchestrator_config` i opcjonalny
-`thread_id`. Korzysta z istniejących modeli konfiguracji. Pominięcie `thread_id`
-zachowuje działanie orchestratora: otwarcie ostatniej rozmowy lub utworzenie
-nowej, jeśli baza jest pusta. Nową rozmowę można wskazać przez nowe UUID.
+Initialization accepts `agent_config`, `orchestrator_config`, and an optional
+`thread_id`. It uses the existing configuration models. When `thread_id` is
+omitted, the orchestrator opens the most recent conversation or creates one
+when the database is empty. A new conversation can be selected with a new UUID.
 
-Pobierz `GET /config`, zmień wartości i wyślij cały obiekt do `PUT /config`.
-Zmiana zachowuje ID rozmowy. Zmiana ścieżki SQLite wybiera inny magazyn,
-bez przenoszenia historii. Konfiguracja jest utrzymywana w pamięci aplikacji.
+Fetch `GET /config`, change the values, and send the complete object to
+`PUT /config`. The conversation ID is preserved. Changing the SQLite path
+selects another store without moving history. Configuration is kept in memory
+for the lifetime of the application.
 
-`POST /chat` przyjmuje `{"message":"Treść wiadomości"}`. Chat, resume i retry
-zwracają NDJSON: każde zdarzenie orchestratora to osobna linia JSON.
-`POST /resume` przyjmuje `{"decisions":{"interrupt-id":{"answer":"..."}}}`
-albo decyzje approve/reject zgodne z aktualnym interruptem. Retry, Stop i
-discard nie wymagają body.
+`POST /chat` accepts `{"message":"Message text"}`. Chat, resume, and retry
+return NDJSON: each orchestrator event is a separate JSON line.
+`POST /resume` accepts `{"decisions":{"interrupt-id":{"answer":"..."}}}`
+or approve/reject decisions matching the current interrupt. Retry, stop, and
+discard do not require a request body.
 
-Stream jest częścią bieżącego requestu. Po jego zerwaniu należy odczytać snapshot
-i sprawdzić dostępne wznowienie. Nie ma osobnego rejestru zadań ani replay streamu.
-Jedna blokada chroni orchestrator przed równoległym wykonaniem i zmianą konfiguracji;
-zajęty runtime zwraca `409`. Stop omija blokadę. Synchroniczne endpointy i stream
-FastAPI wykonuje poza event loopem.
+The stream belongs to the current request. After a disconnect, read the
+snapshot and check whether resuming is available. There is no separate task
+registry or stream replay. One lock protects the orchestrator from concurrent
+execution and configuration changes; a busy runtime returns `409`. Stop
+bypasses the lock. FastAPI runs synchronous endpoints and streams outside the
+event loop.
 
-`@log_call` loguje przebieg operacji. Nieoczekiwane wyjątki mają stack trace w
-logach. Błąd po rozpoczęciu streamu jest zdarzeniem błędu; przed jego rozpoczęciem
-może zostać odpowiedzią HTTP. Historia i checkpointy pozostają w SQLite.
+`@log_call` logs operation progress. Unexpected exceptions include stack traces
+in the logs. An error after a stream starts is returned as an error event;
+before the stream starts, it may be returned as an HTTP response. History and
+checkpoints remain in SQLite.

@@ -31,7 +31,12 @@ class AgentOrchestrator:
     def __init__(self, config=None, agent_config=None, agent: BaseAgent | None = None, thread_id=None):
         self.config = config or AgentOrchestratorConfig()
         self.agent_config = agent_config or (agent.config if agent else AgentConfig())
-        self.store = ConversationStore(Path(self.config.sqlite_path or self.config.working_dir / "agent_threads.sqlite3"))
+        sqlite_path = (
+            Path(self.config.sqlite_path)
+            if self.config.sqlite_path is not None
+            else self.agent_config.backend_root / "agent_threads.sqlite3"
+        )
+        self.store = ConversationStore(sqlite_path)
         self.thread_id = thread_id or self.store.latest() or str(uuid4())
         self.store.ensure(self.thread_id)
         self.agent = agent or SupervisorAgent.from_config(self.agent_config, self.config, checkpointer=self.store.checkpointer)

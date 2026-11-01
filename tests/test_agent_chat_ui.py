@@ -208,6 +208,8 @@ class AgentChatUiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post("/api/reset")
         result = await response.json()
         self.assertNotEqual(result["thread_id"], "two")
+        listing = await (await self.client.get("/api/conversations")).json()
+        self.assertIn(result["thread_id"], [item["thread_id"] for item in listing["conversations"]])
 
     def test_rendered_javascript_parses_and_consumes_streams(self):
         html = _build_ui_html()

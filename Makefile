@@ -10,11 +10,10 @@ test:
 	uv run --locked --python $(PYTHON_VERSION) python -m unittest discover -s tests -t .
 
 run:
-	@powershell.exe -NoProfile -Command "try { Invoke-RestMethod 'http://localhost:11434/api/version' -TimeoutSec 2 | Out-Null } catch { Start-Process -FilePath 'ollama' -ArgumentList 'serve' -WindowStyle Hidden -ErrorAction Stop; Start-Sleep -Seconds 2 }"
 	uv run --locked --python $(PYTHON_VERSION) python run_agent_chat_ui.py
 
 cli:
 	uv run --locked --python $(PYTHON_VERSION) platon
 
 api:
-	uv run --locked --python $(PYTHON_VERSION) uvicorn platon.backend.app:create_app --factory --host 127.0.0.1 --port 8000 --workers 1
+	uv run --locked --python $(PYTHON_VERSION) python -m platon.backend.app

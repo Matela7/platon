@@ -14,7 +14,7 @@ class AgentOrchestratorConfig(BaseModel):
         base_url: Ollama server base URL.
         persist_dir: Directory used by Chroma persistence.
         working_dir: Root workspace available to the agent and its tools.
-        sqlite_path: Optional explicit path to the thread SQLite database.
+        sqlite_path: Explicit database path; defaults to agent backend_root when None.
     """
 
     base_url: str = "http://localhost:11434"

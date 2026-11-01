@@ -1121,9 +1121,13 @@ async def reset_chat(request):
             request.app[STATE]["history"] = []
             old_agent.close()
             LOGGER.info("Started a new conversation after reset")
-        await asyncio.get_running_loop().run_in_executor(_executor(request.app), reset)
+            return request.app[STATE]["agent"].list_threads()
+        conversation_cache = await asyncio.get_running_loop().run_in_executor(
+            _executor(request.app), reset
+        )
         request.app[STATE]["interrupts"] = []
         request.app[STATE]["can_retry"] = False
+        request.app[STATE]["conversation_cache"] = conversation_cache
         return web.json_response({"status": "ok", "thread_id": request.app[STATE]["agent"].thread_id})
 
 

@@ -21,6 +21,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from platon.app_logging import LOGGER, configure_logging, log_call
+from platon.backend.utils.ollama_runtime_utils import ensure_local_ollama
 
 load_dotenv(dotenv_path=".env")
 configure_logging()
@@ -711,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Pełny ekran wymaga pakietu rich. Uruchamiam klasyczny CLI.", file=sys.stderr)
     try:
         LOGGER.info("Starting terminal chat application")
+        ensure_local_ollama()
         if modern is not None:
             agent = build_with_splash(lambda: _build_agent(args.thread), no_color=args.no_color)
         else:
