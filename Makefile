@@ -16,4 +16,4 @@ cli:
 	uv run --locked --python $(PYTHON_VERSION) platon
 
 api:
-	uv run --locked --python $(PYTHON_VERSION) python run_backend.py
+	uv run --locked --python $(PYTHON_VERSION) python -m platon.backend.app

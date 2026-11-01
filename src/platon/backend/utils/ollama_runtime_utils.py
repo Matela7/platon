@@ -1,4 +1,4 @@
-"""Start and verify the local Ollama service before building an agent."""
+"""Utilities for starting and verifying the local Ollama service."""
 
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from platon.app_logging import LOGGER
 
 
 def _is_reachable(base_url: str, timeout: float = 1.0) -> bool:
+    """Return whether the Ollama version endpoint responds successfully.
+
+    Args:
+        base_url: The configured Ollama service URL.
+        timeout: Maximum number of seconds to wait for the response.
+
+    Returns:
+        True when the service responds with HTTP 200; otherwise False.
+    """
     try:
         with urllib.request.urlopen(
             f"{base_url.rstrip('/')}/api/version",
@@ -29,10 +38,19 @@ def ensure_local_ollama(
     *,
     timeout_seconds: float = 30.0,
 ) -> None:
-    """Ensure a local Ollama endpoint is reachable.
+    """Ensure that the configured Ollama endpoint is ready.
 
-    Remote endpoints are only checked, never started. A clear error is raised
-    when a local service cannot be started or does not become ready.
+    Remote endpoints are checked but never started by this function. A local
+    Ollama process is started only when the endpoint is not already reachable.
+
+    Args:
+        base_url: Ollama URL. Defaults to ``OLLAMA_BASE_URL`` or localhost.
+        timeout_seconds: Maximum time to wait for a newly started service.
+
+    Raises:
+        RuntimeError: If a remote endpoint is unavailable, Ollama is not
+            installed, the process cannot be started, or it never becomes
+            ready.
     """
     url = base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     if _is_reachable(url):

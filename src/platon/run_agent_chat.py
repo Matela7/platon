@@ -21,7 +21,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from platon.app_logging import LOGGER, configure_logging, log_call
-from platon.ollama_runtime import ensure_local_ollama
+from platon.backend.utils.ollama_runtime_utils import ensure_local_ollama
 
 load_dotenv(dotenv_path=".env")
 configure_logging()

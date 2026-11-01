@@ -1,10 +1,13 @@
 """FastAPI application with one AgentRuntimeService instance."""
 
+import os
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from threading import Lock
 
 import uvicorn
+from dotenv import load_dotenv
+
 from fastapi import FastAPI
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
@@ -12,6 +15,7 @@ from starlette.middleware.cors import CORSMiddleware
 from platon.app_logging import LOGGER
 from platon.backend.routers.agent_runtime import router
 from platon.backend.services.agent_runtime_service import AgentRuntimeService
+from platon.backend.utils.ollama_runtime_utils import ensure_local_ollama
 
 
 def create_app(
@@ -55,11 +59,14 @@ def create_app(
     app.include_router(router)
     return app
 
+
 if __name__ == "__main__":
+    load_dotenv(dotenv_path=".env")
+    ensure_local_ollama()
     uvicorn.run(
         "platon.backend.app:create_app",
         factory=True,
-        host="127.0.0.1",
-        port=8000,
+        host=os.getenv("AGENT_API_HOST", "127.0.0.1"),
+        port=int(os.getenv("AGENT_API_PORT", "8000")),
         log_level="info",
     )

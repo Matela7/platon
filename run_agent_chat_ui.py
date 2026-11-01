@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=".env")
 
 from platon.backend.agent_chat_ui import create_app
-from platon.ollama_runtime import ensure_local_ollama
+from platon.backend.utils.ollama_runtime_utils import ensure_local_ollama
 
 
 def main() -> int:
