@@ -65,6 +65,9 @@ def self_test() -> None:
     from platon.backend.app import create_app
     from platon.agent.prompt_loader import load_prompt
     from platon.agent.tools.execution import create_execution_tools
+    from sentence_transformers import SentenceTransformer
+    # Import the real document embedding stack without downloading a model.
+    assert callable(SentenceTransformer)
     app = create_app(document_factory=lambda: object())
     endpoint = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/health")
     assert endpoint()["status"] == "ok"
@@ -73,7 +76,7 @@ def self_test() -> None:
         tools = {tool.name: tool for tool in create_execution_tools(Path(directory))}
         output = tools["run_python"].invoke({"code": "print('PLATON_PYTHON_OK')"})
         assert "PLATON_PYTHON_OK" in output, output
-    print(json.dumps({"status": "ok", "checks": ["health", "prompts", "venv", "python"]}))
+    print(json.dumps({"status": "ok", "checks": ["health", "prompts", "venv", "python", "document_embedding_imports"]}))
 
 
 if __name__ == "__main__":

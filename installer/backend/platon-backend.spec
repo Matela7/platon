@@ -32,6 +32,9 @@ for package in ("deepagents", "langgraph", "langchain_ollama", "fastmcp", "tikto
     print(f"Collecting modules: {package}", flush=True)
     hiddenimports += modules_from_files(package)
 hiddenimports += ["chromadb.api.rust", "chromadb.segment.impl.vector.local_persistent_hnsw", "chromadb.telemetry.product.posthog", "transformers.models.qwen3.modeling_qwen3", "transformers.models.qwen3.configuration_qwen3"]
+# PyInstaller 6.16's SciPy hook predates the 1.17 extension and the 1.18
+# relocation of array_api_compat. These imports are resolved dynamically.
+hiddenimports += ["scipy._cyutility", "scipy._external.array_api_compat.numpy.fft"]
 for distribution in ("langchain-core", "langchain", "langgraph", "deepagents", "chromadb", "sentence-transformers", "transformers", "pydantic", "fastmcp"):
     datas += copy_metadata(distribution, recursive=True)
 hiddenimports += modules_from_files("platon")

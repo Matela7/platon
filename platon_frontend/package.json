@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Desktop client for the Platon agent runtime",
+  "homepage": "https://matela7.github.io/",
+  "author": {
+    "name": "Matela",
+    "email": "michexstudio@gmail.com"
+  },
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
@@ -69,6 +74,7 @@
       "icon": "build/icon.png"
     },
     "linux": {
+      "category": "Utility",
       "target": [
         "AppImage",
         "deb"

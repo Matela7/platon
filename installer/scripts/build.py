@@ -51,7 +51,8 @@ def main() -> None:
         run("uv", "python", "install", "3.13")
         run("uv", "sync", "--frozen", "--no-dev", "--python", "3.13")
         run("uv", "run", "--frozen", "--no-dev", "--with-requirements", str(INSTALLER / "backend" / "requirements-build.txt"), "python", "-m", "PyInstaller", "--clean", "--noconfirm", "--distpath", str(staging / "backend"), "--workpath", str(INSTALLER / "backend" / "build"), str(INSTALLER / "backend" / "platon-backend.spec"))
-        interpreter = Path(subprocess.check_output(["uv", "python", "find", "--managed-python", "3.13"], text=True).strip()).resolve()
+        # uv run sets VIRTUAL_ENV; copy the full interpreter, not its venv launcher.
+        interpreter = Path(subprocess.check_output(["uv", "python", "find", "--system", "--managed-python", "3.13"], text=True).strip()).resolve()
         python_root = interpreter.parent if os.name == "nt" else interpreter.parent.parent
         python_staging = staging / "python"
         if python_staging.exists():
