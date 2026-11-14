@@ -21,6 +21,7 @@ from platon.agent.base_agent import BaseAgent
 from platon.agent.deep_agent import DeepAgent
 from platon.agent.prompt_loader import load_prompt
 from platon.agent.tools.interaction import ask_user
+from platon.agent.tools.image_generation import create_image_tool
 
 from platon.agent.agents.coding_agent import CodingAgent
 from platon.agent.agents.gmail_agent import GmailAgent
@@ -158,7 +159,7 @@ class SupervisorAgent(DeepAgent):
             "gmail": GmailAgent(model=specialist_model, config=agent_config,
                                 config_path=Path.cwd() / ".mcp.json"),
         }
-        return cls(
+        supervisor = cls(
             model=shared_model,
             subagents=subagents,
             config=agent_config,
@@ -166,6 +167,8 @@ class SupervisorAgent(DeepAgent):
             checkpointer=checkpointer,
             subagent_model=subagent_model,
         )
+        supervisor.tools_list.append(create_image_tool(agent_config.backend_root))
+        return supervisor
 
     def close(self):
         for agent in self.subagents.values():

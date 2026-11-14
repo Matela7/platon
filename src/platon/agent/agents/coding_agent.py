@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
+from platon.agent.deep_agent import DeepAgent
 from platon.agent.workflow_agent import WorkflowAgent
 from platon.agent.models.agent_config import AgentConfig
 from platon.agent.prompt_loader import load_prompt
@@ -15,7 +17,7 @@ from platon.agent.tools.execution import create_execution_tools
 from platon.agent.tools.file_management import create_file_management_tools
 
 
-class CodingAgent(WorkflowAgent):
+class CodingAgent(DeepAgent, WorkflowAgent):
     """Inspect, edit, and execute code inside the configured workspace."""
 
     agent_name = "coding_agent"
@@ -26,7 +28,8 @@ class CodingAgent(WorkflowAgent):
         "written to an artifact. It can verify changes and consume automatically supplied research or database "
         "reports, but it cannot browse the web or query private collections."
     )
-    read_only_tools = frozenset({"read_file", "file_search", "list_directory"})
+    read_only_tools = frozenset({"ls", "read_file", "glob", "grep"})
+    use_shared_filesystem = False  # Keep the SDK filesystem rooted at backend_root.
 
     def __init__(
         self,
@@ -37,7 +40,6 @@ class CodingAgent(WorkflowAgent):
         prompt: str | None = None,
         checkpointer: Any | None = None,
     ) -> None:
-        self.working_dir = working_dir.expanduser().resolve()
         super().__init__(
             model=model,
             config=config,
@@ -45,12 +47,15 @@ class CodingAgent(WorkflowAgent):
             prompt=prompt,
             checkpointer=checkpointer,
         )
+        # Retain working_dir in the constructor for existing callers.
+        self.working_dir = self.config.backend_root.expanduser().resolve()
         self.max_tool_calls = self.config.coding_tool_limit
         if tools_list is None:
             tools_list = [
-                *create_file_management_tools(
-                    self.working_dir,
-                    self.config.max_tool_output_chars,
+                *(
+                    tool for tool in create_file_management_tools(
+                        self.working_dir, self.config.max_tool_output_chars,
+                    ) if tool.name in {"copy_file", "move_file"}
                 ),
                 *create_execution_tools(
                     self.working_dir,
@@ -61,6 +66,17 @@ class CodingAgent(WorkflowAgent):
             self.tools_list = tools_list
         if prompt is None:
             self.prompt = self._workspace_prompt()
+
+    def _middleware(self) -> list[Any]:
+        middleware = super()._middleware()
+        for item in middleware:
+            if isinstance(item, HumanInTheLoopMiddleware):
+                # SDK tools are injected later, outside self.tools_list.
+                item.interrupt_on.update({
+                    name: {"allowed_decisions": ["approve", "reject"]}
+                    for name in ("write_file", "edit_file", "delete")
+                })
+        return middleware
 
     def _workspace_prompt(self) -> str:
         return load_prompt(self.prompt_path).replace("{workspace_root}", str(self.working_dir))

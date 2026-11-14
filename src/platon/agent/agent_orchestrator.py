@@ -1,6 +1,7 @@
 """A conversation-bound wrapper over the supervisor's runnable."""
 
 from collections.abc import Iterator
+import base64
 from pathlib import Path
 from threading import Event
 from time import perf_counter
@@ -24,6 +25,37 @@ MessageHistory = list[dict[str, str]]
 def _duration_seconds(value: object) -> float:
     """Convert optional Ollama nanosecond metadata to seconds."""
     return value / 1e9 if isinstance(value, (int, float)) else 0.0
+
+
+def _build_multimodal_content(
+    text: str,
+    image_paths: list[str] | None = None,
+) -> str | list[dict[str, Any]]:
+    """Build text or LangChain multimodal block content for HumanMessage."""
+    if not image_paths:
+        return text
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    mime_map = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+    for path_str in image_paths:
+        path_obj = Path(path_str)
+        if not path_obj.is_file():
+            LOGGER.warning("Chat image not found: %s", path_str)
+            continue
+        data = path_obj.read_bytes()
+        suffix = path_obj.suffix.lower()
+        mime = mime_map.get(suffix, "image/png")
+        b64 = base64.b64encode(data).decode("ascii")
+        blocks.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{b64}"},
+        })
+    return blocks if len(blocks) > 1 else text
 
 
 class AgentOrchestrator:
@@ -75,6 +107,21 @@ class AgentOrchestrator:
     def thread_exists(self, thread_id):
         return self.store.exists(thread_id)
 
+    @log_call
+    def delete_thread(self, thread_id: str | None = None) -> bool:
+        target_id = thread_id or self.thread_id
+        if not self.thread_exists(target_id):
+            return False
+        if target_id == self.thread_id and self._running.is_set():
+            raise RuntimeError("Stop the active run before deleting the active conversation.")
+        deleted = self.store.delete_thread(target_id)
+        if deleted and target_id == self.thread_id:
+            self.thread_id = self.store.latest() or str(uuid4())
+            self.store.ensure(self.thread_id)
+            self.run_config = {"configurable": {"thread_id": f"platon-chat-v2:{self.thread_id}"}, "max_concurrency": 2, "recursion_limit": 100}
+            LOGGER.info("Active conversation reset to %s after deletion", self.thread_id)
+        return deleted
+
     def close(self):
         try:
             close = getattr(self.agent, "close", None)
@@ -92,7 +139,7 @@ class AgentOrchestrator:
         return True
 
     @log_call
-    def stream(self, user_input: str, history: MessageHistory | None = None, *, stop_event: Event | None = None) -> Iterator[dict[str, Any]]:
+    def stream(self, user_input: str, history: MessageHistory | None = None, *, image_paths: list[str] | None = None, stop_event: Event | None = None) -> Iterator[dict[str, Any]]:
         if not isinstance(user_input, str) or not user_input.strip():
             raise ValueError("Message cannot be empty.")
         snapshot = self._snapshot()
@@ -103,11 +150,19 @@ class AgentOrchestrator:
         visible = list(history if history is not None else self.load_thread_history())
         # Bootstrap older conversations once; checkpoints remain the execution source of truth.
         messages = [] if snapshot.values else [
-            (HumanMessage if item["role"] == "user" else AIMessage)(content=item["content"])
+            (HumanMessage if item["role"] == "user" else AIMessage)(
+                content=item["content"],
+                **({"additional_kwargs": {"images": item["images"]}} if item.get("images") else {})
+            )
             for item in visible if item.get("role") in {"user", "assistant"}
         ]
-        messages.append(HumanMessage(content=user_input.strip(), id=str(uuid4())))
-        visible.append({"role": "user", "content": user_input.strip()})
+        content = _build_multimodal_content(user_input.strip(), image_paths)
+        kwargs = {"images": [Path(p).name for p in image_paths]} if image_paths else {}
+        messages.append(HumanMessage(content=content, id=str(uuid4()), additional_kwargs=kwargs))
+        user_entry: dict[str, Any] = {"role": "user", "content": user_input.strip()}
+        if image_paths:
+            user_entry["images"] = [Path(p).name for p in image_paths]
+        visible.append(user_entry)
         self.store.save(self.thread_id, visible)
         LOGGER.info("Conversation input persisted; starting agent workflow")
         yield from self._run({"messages": messages}, stop_event=stop_event)
@@ -273,6 +328,12 @@ class AgentOrchestrator:
         # On errors, checkpoint messages retain confirmed work. Visible history is reconciled too.
         persisted = visible_messages(messages)
         if persisted:
+            old_history = self.store.load(self.thread_id)
+            old_user_entries = [e for e in old_history if e.get("role") == "user" and "images" in e]
+            new_user_entries = [e for e in persisted if e.get("role") == "user"]
+            for new_entry, old_entry in zip(new_user_entries, old_user_entries):
+                if "images" in old_entry and "images" not in new_entry:
+                    new_entry["images"] = old_entry["images"]
             self.store.save(self.thread_id, persisted)
         payload = {**report, "run_id": run_id, "thread_id": self.thread_id, "interrupts": interrupts,
                    "can_retry": bool(snapshot.next) and not interrupts, "result": result,

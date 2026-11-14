@@ -64,6 +64,24 @@ class ConversationStore:
                            "message_count": len(messages), "created_at": created, "updated_at": updated})
         return result
 
+    @log_call
+    def delete_thread(self, thread_id: str) -> bool:
+        if not self.exists(thread_id):
+            return False
+        self.connection.execute("DELETE FROM threads WHERE thread_id = ?", (thread_id,))
+        self.connection.commit()
+        if hasattr(self.checkpointer, "delete_thread"):
+            try:
+                self.checkpointer.delete_thread(f"platon-chat-v2:{thread_id}")
+            except Exception:
+                LOGGER.exception("Failed to delete checkpoint thread with prefix (thread_id=%s)", thread_id)
+            try:
+                self.checkpointer.delete_thread(thread_id)
+            except Exception:
+                LOGGER.exception("Failed to delete checkpoint thread (thread_id=%s)", thread_id)
+        LOGGER.info("Conversation deleted (thread_id=%s)", thread_id)
+        return True
+
     def close(self):
         self.connection.close()
         LOGGER.info("Conversation store closed")

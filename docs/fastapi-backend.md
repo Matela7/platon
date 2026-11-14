@@ -13,6 +13,8 @@ One application owns one service instance. All endpoints use the
 | GET | `/snapshot` | Get history, interrupts, and retry availability |
 | GET | `/history` | Get conversation history |
 | GET | `/threads` | List conversations in the current database |
+| DELETE | `/threads/{thread_id}` | Delete conversation history and checkpoints |
+| DELETE | `/threads` | Delete the active conversation |
 | GET | `/config` | Get both configurations |
 | PUT | `/config` | Update configuration and rebuild the orchestrator |
 | POST | `/chat` | Send a message and stream the response |
@@ -48,3 +50,19 @@ event loop.
 in the logs. An error after a stream starts is returned as an error event;
 before the stream starts, it may be returned as an HTTP response. History and
 checkpoints remain in SQLite.
+
+## Generated images
+
+The initialized runtime selects the image directory: `<agent_config.backend_root>/images`.
+The endpoints use the runtime lock, so they return 409 if the runtime is busy.
+Only generated filenames (`32` lowercase hexadecimal characters followed by `.png`)
+are accepted. Symlinks are not served or deleted.
+
+| Method | Path | Action |
+|---|---|---|
+| GET | `/api/v1/images` | List generated images and metadata |
+| GET | `/api/v1/images/{filename}` | Display the PNG inline |
+| GET | `/api/v1/images/{filename}?download=true` | Download the PNG as an attachment |
+| DELETE | `/api/v1/images/{filename}` | Delete one generated image |
+
+The `filename` is the basename of the path returned by `generate_image`.
