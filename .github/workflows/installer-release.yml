@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
       tag:
-        description: Existing release tag (for example v0.1.1); required to publish
+        description: Release tag (for example v0.1.1); required to publish
         type: string
         required: false
         default: ''
@@ -36,9 +36,6 @@ jobs:
         run: |
           if [ -n "$TAG" ] && git ls-remote --exit-code --tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$TAG" >/dev/null; then
             ref="refs/tags/$TAG"
-          elif [ -n "$TAG" ] && [ "$PUBLISH" = "true" ]; then
-            echo "::error::Publishing requires existing tag $TAG."
-            exit 1
           else
             ref="$GITHUB_SHA"
             if [ -n "$TAG" ]; then
@@ -60,7 +57,7 @@ jobs:
           from pathlib import Path
           version = json.loads(Path('platon_frontend/package.json').read_text())['version']
           if os.environ['RELEASE_TAG'] != f'v{version}':
-              raise SystemExit(f'Publishing requires an existing tag v{version}, matching the app version.')
+              raise SystemExit(f'Publishing requires tag v{version}, matching the app version.')
           PY
       - name: Resolve one source commit for all platforms
         id: source
@@ -110,6 +107,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
         run: |
-          gh release view "$TAG" || gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes "Native desktop installers. Review artifacts and signing before publishing."
+          gh release view "$TAG" || gh release create "$TAG" --draft --target "${{ needs.prepare.outputs.ref }}" --title "$TAG" --notes "Native desktop installers. Review artifacts and signing before publishing."
           test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
           gh release upload "$TAG" artifacts/* --clobber
