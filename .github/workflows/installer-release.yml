@@ -32,8 +32,9 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           PUBLISH: ${{ inputs.publish }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$TAG" ] && git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+          if [ -n "$TAG" ] && git ls-remote --exit-code --tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$TAG" >/dev/null; then
             ref="refs/tags/$TAG"
           elif [ -n "$TAG" ] && [ "$PUBLISH" = "true" ]; then
             echo "::error::Publishing requires existing tag $TAG."
