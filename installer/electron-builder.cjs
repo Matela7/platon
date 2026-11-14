@@ -5,7 +5,9 @@ const config = { ...app.build,
   win: { ...app.build.win, target: ['nsis'] },
   directories: { app: path.join(__dirname, 'staging/app'), output: path.join(__dirname, 'dist'), buildResources: path.join(__dirname, 'staging/app/build') },
   extraResources: [
-    { from: path.join(__dirname, 'staging/backend'), to: 'backend', filter: ['platon-backend', 'platon-backend.exe'] },
+    process.platform === 'linux'
+      ? { from: path.join(__dirname, 'staging/backend/platon-backend'), to: 'backend', filter: ['**/*'] }
+      : { from: path.join(__dirname, 'staging/backend'), to: 'backend', filter: ['platon-backend', 'platon-backend.exe'] },
     { from: path.join(__dirname, 'staging/python'), to: 'python' },
   ],
   publish: null,

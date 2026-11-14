@@ -62,8 +62,11 @@ def main() -> None:
         (staging / "target.json").write_text(json.dumps([os_target, arch]), encoding="utf-8")
     elif not (staging / "target.json").is_file() or json.loads((staging / "target.json").read_text(encoding="utf-8")) != [os_target, arch]:
         raise SystemExit("Staged backend target differs from this machine. Rebuild without --skip-backend.")
-    executable = staging / "backend" / ("platon-backend.exe" if os.name == "nt" else "platon-backend")
-    if not executable.is_file() or not (staging / "python").is_dir():
+    backend_bundle = staging / "backend"
+    if os_target == "linux":
+        backend_bundle /= "platon-backend"
+    executable = backend_bundle / ("platon-backend.exe" if os.name == "nt" else "platon-backend")
+    if not executable.is_file() or not (staging / "python").is_dir() or (os_target == "linux" and not (backend_bundle / "_internal").is_dir()):
         raise SystemExit("Missing staged backend/Python. Run without --skip-backend first.")
     os.environ["PLATON_PYTHON_EXECUTABLE"] = str(staging / "python" / ("python.exe" if os.name == "nt" else "bin/python3.13"))
     run(str(executable), "--self-test")
