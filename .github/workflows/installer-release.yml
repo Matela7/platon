@@ -1,0 +1,96 @@
+name: All desktop installers (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload installers to a draft GitHub Release after all builds pass
+        type: boolean
+        default: false
+      tag:
+        description: Existing release tag (for example v0.1.1); required to publish
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      ref: ${{ steps.source.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}
+          persist-credentials: false
+      - name: Validate release version before building
+        if: inputs.publish
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          version = json.loads(Path('platon_frontend/package.json').read_text())['version']
+          if os.environ['RELEASE_TAG'] != f'v{version}':
+              raise SystemExit(f'Publishing requires an existing tag v{version}, matching the app version.')
+          PY
+      - name: Resolve one source commit for all platforms
+        id: source
+        run: echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: prepare
+    uses: ./.github/workflows/installer-windows.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+
+  linux:
+    needs: prepare
+    uses: ./.github/workflows/installer-linux.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+
+  macos:
+    needs: prepare
+    uses: ./.github/workflows/installer-macos.yml
+    with:
+      ref: ${{ needs.prepare.outputs.ref }}
+
+  publish:
+    needs: [prepare, windows, linux, macos]
+    if: inputs.publish
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: platon-windows-x64
+          path: artifacts
+      - uses: actions/download-artifact@v7
+        with:
+          name: platon-linux-x64
+          path: artifacts
+      - uses: actions/download-artifact@v7
+        with:
+          name: platon-macos-arm64
+          path: artifacts
+      - name: Upload to draft release for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release view "$TAG" || gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes "Native desktop installers. Review artifacts and signing before publishing."
+          test "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true
+          gh release upload "$TAG" artifacts/* --clobber

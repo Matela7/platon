@@ -32,4 +32,4 @@ Branding uses a static corgi image and conversation avatars use a different, sta
 
 ## Packaging
 
-Run `npm run dist:win`, `npm run dist:mac`, or `npm run dist:linux` on the corresponding platform. Artifacts are written to `dist/`. Cross-platform configuration is present; signing and platform builds should be completed on their target operating systems.
+Run `npm run dist` (or the platform aliases) on the target operating system. These commands use the complete [installer pipeline](../installer/README.md), which includes the PyInstaller backend and Python runtime. Artifacts are written to `../installer/dist/`. The first launch prepares Ollama, both Gemma models and, on Windows, the CUDA image generator. Native builds, signing and update-release validation must be completed on each target operating system.

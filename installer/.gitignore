@@ -1,0 +1,8 @@
+staging/
+dist/
+node_modules/
+.venv/
+backend/build/
+backend/dist/
+__pycache__/
+*.log

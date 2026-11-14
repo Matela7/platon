@@ -8,10 +8,10 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test *.test.mjs",
-    "dist": "electron-builder",
-    "dist:win": "electron-builder --win",
-    "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist": "uv run --no-project --python 3.13 python ../installer/scripts/build.py",
+    "dist:win": "uv run --no-project --python 3.13 python ../installer/scripts/build.py",
+    "dist:mac": "uv run --no-project --python 3.13 python ../installer/scripts/build.py",
+    "dist:linux": "uv run --no-project --python 3.13 python ../installer/scripts/build.py"
   },
   "devDependencies": {
     "electron": "^39.0.0",
@@ -20,10 +20,63 @@
   "build": {
     "appId": "dev.platon.desktop",
     "productName": "Platon.ai",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.cjs", "preload.cjs", "desktop.cjs", "server.cjs", "index.html", "app.js", "i18n.js", "styles.css", "api.js", "package.json", "build/icon.ico", "build/icon.png", "pixel-corgi/qa/final-previews/idle.gif", "pixel-corgi/qa/final-previews/running.gif", "pixel-corgi/qa/final-previews/waving.gif", "pixel-corgi/qa/final-previews/waiting.gif", "pixel-corgi/qa/final-previews/review.gif", "pixel-corgi/qa/final-previews/running-left.gif", "pixel-corgi/qa/final-previews/running-right.gif", "pixel-corgi/qa/final-previews/jumping.gif", "pixel-corgi/qa/final-frames/idle/00.png", "pixel-corgi/qa/final-frames/running-left/00.png"],
-    "win": { "target": ["nsis", "zip"], "icon": "build/icon.ico" },
-    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.productivity", "icon": "build/icon.png" },
-    "linux": { "target": ["AppImage", "deb"], "icon": "build/icons" }
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "desktop.cjs",
+      "server.cjs",
+      "index.html",
+      "app.js",
+      "i18n.js",
+      "styles.css",
+      "api.js",
+      "package.json",
+      "build/icon.ico",
+      "build/icon.png",
+      "pixel-corgi/qa/final-previews/idle.gif",
+      "pixel-corgi/qa/final-previews/running.gif",
+      "pixel-corgi/qa/final-previews/waving.gif",
+      "pixel-corgi/qa/final-previews/waiting.gif",
+      "pixel-corgi/qa/final-previews/review.gif",
+      "pixel-corgi/qa/final-previews/running-left.gif",
+      "pixel-corgi/qa/final-previews/running-right.gif",
+      "pixel-corgi/qa/final-previews/jumping.gif",
+      "pixel-corgi/qa/final-frames/idle/00.png",
+      "pixel-corgi/qa/final-frames/running-left/00.png",
+      "desktop-runtime.cjs",
+      "updates.cjs",
+      "setup.html",
+      "setup.js",
+      "setup.css"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icons"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "6.6.2"
   }
 }

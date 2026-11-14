@@ -1,0 +1,12 @@
+{
+  "name": "platon-installer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dist": "electron-builder --config electron-builder.cjs"
+  },
+  "devDependencies": {
+    "electron-builder": "26.0.12",
+    "electron": "39.8.5"
+  }
+}

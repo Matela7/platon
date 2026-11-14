@@ -17,6 +17,19 @@ from platon.agent.tools.errors import ToolError
 from platon.app_logging import LOGGER, log_call
 
 
+def execution_python() -> str:
+    """Frozen backends need the separately shipped general-purpose Python."""
+    configured = os.environ.get("PLATON_PYTHON_EXECUTABLE")
+    if configured:
+        executable = Path(configured).expanduser().resolve()
+        if not executable.is_file():
+            raise FileNotFoundError(f"Bundled Python is missing: {executable}")
+        return str(executable)
+    if getattr(sys, "frozen", False):
+        raise RuntimeError("Bundled Python is not configured (PLATON_PYTHON_EXECUTABLE).")
+    return sys.executable
+
+
 def create_execution_tools(
     working_dir: Path,
     max_output_chars: int = 20_000,
@@ -69,6 +82,15 @@ def create_execution_tools(
                 env: dict[str, str] | None = None) -> str:
         LOGGER.info("Starting host execution tool (tool=%s, shell=%s)", tool_name, shell)
         process_env = env if env is not None else {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        if getattr(sys, "frozen", False):
+            process_env = dict(process_env)
+            if "LD_LIBRARY_PATH_ORIG" in process_env:
+                process_env["LD_LIBRARY_PATH"] = process_env["LD_LIBRARY_PATH_ORIG"]
+            else:
+                process_env.pop("LD_LIBRARY_PATH", None)
+            if os.name == "nt":
+                import ctypes
+                ctypes.windll.kernel32.SetDllDirectoryW(None)
         try:
             if stop_event := current_stop_event():
                 result = run_stoppable(command, shell=shell, stop_event=stop_event, env=process_env)
@@ -105,7 +127,7 @@ def create_execution_tools(
             with venv_lock:
                 validate_venv_path()
                 if not venv_dir.exists():
-                    execute([sys.executable, "-m", "venv", "venv"], shell=False, tool_name=tool_name)
+                    execute([execution_python(), "-m", "venv", "venv"], shell=False, tool_name=tool_name)
                 if not (venv_dir / "pyvenv.cfg").is_file() or not venv_python.is_file():
                     raise ValueError(f"Not a complete Python virtual environment: {venv_dir}")
         except ToolError:

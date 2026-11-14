@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('platonWindow', {
   isElectron: true,
+  setupStatus: () => ipcRenderer.invoke('setup-status'),
   minimize: () => ipcRenderer.send('window-minimize'),
   toggleMaximize: () => ipcRenderer.send('window-maximize'),
   close: () => ipcRenderer.send('window-close'),

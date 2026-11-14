@@ -21,9 +21,13 @@ const FILES = new Map([
   ['/favicon.ico', ['build/icon.ico', 'image/x-icon']],
 ]);
 const API_PREFIX = '/api/v1/';
+function backendURL() {
 const backend = new URL(process.env.PLATON_BACKEND_URL || 'http://127.0.0.1:8000');
 if (!['http:', 'https:'].includes(backend.protocol) || backend.username || backend.password) {
   throw new Error('PLATON_BACKEND_URL must be an HTTP(S) URL without credentials');
+}
+
+return backend;
 }
 
 function createServer() {
@@ -140,6 +144,7 @@ function proxy(req, res, url) {
     res.writeHead(405, { Allow: 'GET, POST, PUT, DELETE, OPTIONS' }).end();
     return;
   }
+  const backend = backendURL();
   const target = new URL(url.pathname + url.search, backend);
   const headers = { ...req.headers, host: backend.host, connection: 'close' };
   delete headers['content-length'];

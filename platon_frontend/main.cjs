@@ -1,8 +1,12 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
+const { randomBytes } = require('node:crypto');
+const { backendLaunch, availablePort, waitForBackend } = require('./desktop-runtime.cjs');
+const { startUpdates } = require('./updates.cjs');
 const { listen } = require('./server.cjs');
 const { createPreferences, resolveResource } = require('./desktop.cjs');
 let preferences;
@@ -24,7 +28,7 @@ ipcMain.handle('resource-open', async (event, request) => {
     if (!trustedSender(event)) throw new Error('Invalid window');
     const host = new URL(process.env.PLATON_BACKEND_URL || 'http://127.0.0.1:8000').hostname;
     if (!['localhost', '127.0.0.1', '[::1]'].includes(host)) throw new Error('Resources on a remote backend cannot be opened locally.');
-    const target = await resolveResource(request, process.env.PLATON_BACKEND_DIR || path.resolve(__dirname, '..'));
+    const target = await resolveResource(request, (app.isPackaged ? path.join(app.getPath('userData'), 'backend') : process.env.PLATON_BACKEND_DIR || path.resolve(__dirname, '..')));
     const error = await shell.openPath(target);
     return error ? { ok: false, error } : { ok: true };
   } catch (error) { return { ok: false, error: error.message }; }
@@ -37,21 +41,56 @@ let windowPromise;
 let shutdownPromise;
 let allowQuit = false;
 
+let setupStatus = { message: 'Starting Platon backend...', status: 'running' };
+ipcMain.handle('setup-status', event => trustedSender(event) ? setupStatus : null);
+let backendReady;
+let backendFailure;
+let backendReadyComplete = false;
+let backendLog;
 function maybeStartBackend() {
-  if (backendProcess) return;
-  const cwd = process.env.PLATON_BACKEND_DIR;
-  if (!cwd) return;
-  const executable = process.env.PLATON_UV_EXECUTABLE || 'uv';
-  backendProcess = spawn(executable,
-    ['run', '--locked', '--python', '3.13', 'python', '-m', 'platon.backend.app'],
-    {
-      cwd: path.resolve(cwd),
-      shell: false,
-      windowsHide: true,
-      stdio: 'ignore',
-      detached: process.platform !== 'win32',
+  if (backendReady) return backendReady;
+  backendReady = (async () => {
+    const dataDir = path.join(app.getPath('userData'), 'backend');
+    if (app.isPackaged) fs.mkdirSync(dataDir, { recursive: true });
+    const launch = backendLaunch({ packaged: app.isPackaged, resourcesPath: process.resourcesPath,
+      dataDir, port: app.isPackaged ? await availablePort() : undefined });
+    if (!launch) return;
+    process.env.PLATON_BACKEND_URL = launch.url;
+    launch.env = { ...launch.env, PLATON_SETUP_TOKEN: randomBytes(32).toString('hex') };
+    if (app.isPackaged) backendLog = fs.createWriteStream(path.join(dataDir, 'backend.log'), { flags: 'a' });
+    backendLog?.on('error', error => console.error('Backend log failed:', error.message));
+    backendProcess = spawn(launch.executable, launch.args, {
+      cwd: launch.cwd, env: launch.env, shell: false, windowsHide: true,
+      stdio: backendLog ? ['ignore', 'pipe', 'pipe'] : 'ignore', detached: process.platform !== 'win32',
     });
-  backendProcess.once('error', error => console.error('Could not start configured Platon backend:', error.message));
+    backendProcess.stdout?.pipe(backendLog, { end: false });
+    backendProcess.stderr?.pipe(backendLog, { end: false });
+    backendProcess.once('error', error => { backendFailure = error; });
+    backendProcess.once('exit', (code, signal) => {
+      if (!shutdownPromise && backendReadyComplete) {
+        dialog.showErrorBox('Platon backend stopped', `Backend exited (${code ?? signal}). Restart Platon Desktop. Logs: ${dataDir}`);
+        app.quit();
+      }
+    });
+    await waitForBackend(launch.url, backendProcess, { timeoutMs: 300000, failure: () => backendFailure });
+    if (app.isPackaged) {
+      const request = async (route, method = 'GET') => {
+        const response = await fetch(new URL(route, launch.url), { method, headers: { 'X-Platon-Setup-Token': launch.env.PLATON_SETUP_TOKEN }, signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error(`Model setup failed: HTTP ${response.status}`);
+        return response.json();
+      };
+      await request('/setup/start', 'POST');
+      while (!shutdownPromise) {
+        setupStatus = await request('/setup/status');
+        if (setupStatus.status === 'completed') break;
+        if (setupStatus.status === 'error') throw new Error(setupStatus.error || setupStatus.message);
+        if (backendFailure || backendProcess.exitCode !== null) throw backendFailure || new Error('Backend stopped during model setup.');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    backendReadyComplete = true;
+  })();
+  return backendReady;
 }
 
 function waitForBackendClose(child, timeoutMs) {
@@ -89,6 +128,7 @@ async function stopManagedBackend() {
       killer.once('close', finish);
     });
     await waitForBackendClose(child, 3000);
+    if (isRunning()) throw new Error('Backend is still running; update installation was stopped.');
     return;
   }
 
@@ -101,11 +141,16 @@ async function stopManagedBackend() {
   signalGroup('SIGTERM');
   await waitForBackendClose(child, 1500);
   // Do not signal the saved process-group ID after uv exits; the ID could be reused.
-  if (isRunning()) signalGroup('SIGKILL');
+  if (isRunning()) {
+    signalGroup('SIGKILL');
+    await waitForBackendClose(child, 3000);
+    if (isRunning()) throw new Error('Backend is still running; update installation was stopped.');
+  }
 }
 
 async function shutdown() {
   await stopManagedBackend();
+  backendLog?.end();
   if (uiServer) {
     const server = uiServer;
     uiServer = undefined;
@@ -128,11 +173,18 @@ function createWindow() {
 }
 
 async function createWindowOnce() {
-  maybeStartBackend();
   if (BrowserWindow.getAllWindows().length > 0) {
     BrowserWindow.getAllWindows()[0].focus();
     return;
   }
+  let startupWindow;
+  if (app.isPackaged) {
+    startupWindow = new BrowserWindow({ width: 640, height: 360, title: 'Platon setup', autoHideMenuBar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') } });
+    await startupWindow.loadFile(path.join(__dirname, 'setup.html'));
+    startupWindow.on('closed', () => { if (!backendReadyComplete) app.quit(); });
+  }
+  await maybeStartBackend();
+  if (shutdownPromise) return;
   if (!uiServerPromise) {
     uiServerPromise = listen().then(hosted => {
       uiServer = hosted.server;
@@ -170,6 +222,7 @@ async function createWindowOnce() {
   });
   win.webContents.on('will-redirect', event => event.preventDefault());
   await win.loadURL(hosted.url);
+  startupWindow?.close();
 }
 
 ipcMain.on('window-minimize', (event) => {
@@ -197,8 +250,21 @@ ipcMain.handle('window-is-maximized', (event) => {
   return win ? win.isMaximized() : false;
 });
 
-app.whenReady().then(createWindow).catch(error => {
+const instanceAllowed = !app.isPackaged || app.requestSingleInstanceLock();
+if (!instanceAllowed) app.quit();
+app.on('second-instance', () => BrowserWindow.getAllWindows()[0]?.focus());
+
+app.whenReady().then(async () => {
+  if (!instanceAllowed) return;
+  await createWindow();
+  startUpdates({ app, dialog, prepareInstall: async () => {
+    shutdownPromise ||= shutdown();
+    await shutdownPromise;
+    allowQuit = true;
+  } });
+}).catch(error => {
   console.error('Failed to start Platon Desktop:', error);
+  dialog.showErrorBox('Platon Desktop could not start', `${error.message}\nBackend log: ${path.join(app.getPath('userData'), 'backend', 'backend.log')}`);
   app.quit();
 });
 

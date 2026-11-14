@@ -1,0 +1,76 @@
+name: macOS installer (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit (empty = selected branch)
+        type: string
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  macos-installer:
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/installer/.venv
+      PLATON_UPDATE_URL: ${{ vars.PLATON_UPDATE_URL }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+      - name: Prepare Python test environment
+        run: uv sync --locked --python 3.13
+      - name: Test backend setup and bundled Python contract
+        run: uv run --locked --python 3.13 python -m unittest tests.test_desktop_runtime tests.test_execution_venv tests.test_setup_image_generation
+      - name: Install frontend dependencies
+        working-directory: platon_frontend
+        run: npm ci
+      - name: Test frontend
+        working-directory: platon_frontend
+        run: npm test
+      - name: Build macOS installer (publishing disabled)
+        run: uv run --no-project --python 3.13 python installer/scripts/build.py
+      - name: Save macOS installer and update metadata
+        uses: actions/upload-artifact@v6
+        with:
+          name: platon-macos-arm64
+          compression-level: 0
+          retention-days: 14
+          path: |
+            installer/dist/*.dmg
+            installer/dist/*.zip
+            installer/dist/latest-mac.yml
+            installer/dist/*.blockmap
+          if-no-files-found: error
+      - name: Save build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: platon-macos-build-diagnostics
+          retention-days: 14
+          path: |
+            installer/backend/build/platon-backend/warn-*.txt
+            installer/dist/builder-debug.yml
+            installer/dist/builder-effective-config.yaml
+          if-no-files-found: ignore

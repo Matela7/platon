@@ -21,6 +21,8 @@ from platon.backend.schemas.initialize_runtime import INITIALIZE_OPENAPI_EXAMPLE
 from platon.backend.services.document_service import DocumentService
 from platon.backend.services.agent_runtime_service import AgentRuntimeService
 from platon.backend.utils.ollama_runtime_utils import ensure_local_ollama
+from platon.backend.desktop_runtime import image_generation_available
+from platon.backend.desktop_setup import router as setup_router
 
 
 def create_app(
@@ -66,6 +68,11 @@ def create_app(
     app.include_router(router)
     app.include_router(documents_router)
     app.include_router(images_router)
+    app.include_router(setup_router)
+
+    @app.get("/health", include_in_schema=False)
+    def health():
+        return {"status": "ok", "capabilities": {"image_generation": image_generation_available()}}
 
     def custom_openapi():
         if app.openapi_schema:

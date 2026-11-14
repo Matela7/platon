@@ -167,7 +167,9 @@ class SupervisorAgent(DeepAgent):
             checkpointer=checkpointer,
             subagent_model=subagent_model,
         )
-        supervisor.tools_list.append(create_image_tool(agent_config.backend_root))
+        from platon.backend.desktop_runtime import image_generation_available
+        if image_generation_available():
+            supervisor.tools_list.append(create_image_tool(agent_config.backend_root))
         return supervisor
 
     def close(self):

@@ -14,7 +14,7 @@ from platon.agent.tools.execution import create_execution_tools
 class ExecutionVenvTests(unittest.TestCase):
     def test_create_reuse_delete_and_recreate_with_shell_and_python(self):
         with TemporaryDirectory() as directory:
-            root = Path(directory) / "workspace with spaces"
+            root = (Path(directory) / "workspace with spaces").resolve()
             tools = {t.name: t for t in create_execution_tools(root)}
             original_env = dict(os.environ)
             original_cwd = Path.cwd()
