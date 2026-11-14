@@ -176,6 +176,55 @@ class AgentOrchestratorTests(unittest.TestCase):
             finally:
                 reopened.close()
 
+    def test_delete_thread_removes_history_and_checkpoints(self):
+        with TemporaryDirectory() as directory:
+            config = AgentOrchestratorConfig(sqlite_path=Path(directory) / "chat.sqlite3")
+            first = AgentOrchestrator(
+                config=config,
+                agent=BaseAgent(ScriptedModel(responses=[AIMessage(content="first")]), prompt="test"),
+                thread_id="thread-one",
+            )
+            first.invoke("Hello from one")
+            first.close()
+
+            second = AgentOrchestrator(
+                config=config,
+                agent=BaseAgent(ScriptedModel(responses=[AIMessage(content="second")]), prompt="test"),
+                thread_id="thread-two",
+            )
+            try:
+                second.invoke("Hello from two")
+                self.assertEqual([t["thread_id"] for t in second.list_threads()], ["thread-two", "thread-one"])
+                self.assertTrue(second.thread_exists("thread-one"))
+
+                # Non-active thread deletion
+                self.assertTrue(second.delete_thread("thread-one"))
+                self.assertFalse(second.thread_exists("thread-one"))
+                self.assertFalse(second.delete_thread("thread-one"))
+                self.assertEqual([t["thread_id"] for t in second.list_threads()], ["thread-two"])
+
+                # Verify checkpointer cleaned up
+                count_one = second.store.connection.execute(
+                    "SELECT COUNT(*) FROM checkpoints WHERE thread_id LIKE '%thread-one%'"
+                ).fetchone()[0]
+                self.assertEqual(count_one, 0)
+
+                # Active thread cannot be deleted while running
+                second._running.set()
+                try:
+                    with self.assertRaises(RuntimeError):
+                        second.delete_thread("thread-two")
+                finally:
+                    second._running.clear()
+
+                # Active thread deletion resets active thread to a new clean thread
+                self.assertTrue(second.delete_thread())
+                self.assertFalse(second.thread_exists("thread-two"))
+                self.assertNotEqual(second.thread_id, "thread-two")
+                self.assertTrue(second.thread_exists(second.thread_id))
+            finally:
+                second.close()
+
     def test_clarification_uses_injected_checkpointer(self):
         with TemporaryDirectory() as directory:
             agent = SupervisorAgent(ScriptedModel(responses=[call("ask_user", "ask", question="Which file?"), AIMessage(content="done")]), {}, prompt="test", checkpointer=InMemorySaver())

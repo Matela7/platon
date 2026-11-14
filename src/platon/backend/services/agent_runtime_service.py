@@ -66,6 +66,7 @@ class AgentRuntimeService:
         self,
         user_input: str,
         *,
+        image_paths: list[str] | None = None,
         stop_event: Event | None = None,
     ) -> Iterator[RuntimeEvent]:
         """Stream a new user turn using the persisted conversation history."""
@@ -73,6 +74,7 @@ class AgentRuntimeService:
         try:
             yield from self._orchestrator.stream(
                 user_input,
+                image_paths=image_paths,
                 stop_event=stop_event,
             )
         except Exception:
@@ -139,6 +141,12 @@ class AgentRuntimeService:
     def thread_exists(self, thread_id: str) -> bool:
         self._ensure_open()
         return self._orchestrator.thread_exists(thread_id)
+
+    @log_call
+    def delete_thread(self, thread_id: str | None = None) -> bool:
+        """Delete a conversation thread and its checkpoints."""
+        self._ensure_open()
+        return self._orchestrator.delete_thread(thread_id)
 
     @log_call
     def pending_interrupts(self) -> list[dict[str, Any]]:

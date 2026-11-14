@@ -60,6 +60,41 @@ class AgentRuntimeAPITests(unittest.TestCase):
                 ["current", "older"],
             )
 
+    def test_delete_threads_endpoints(self):
+        service = Mock(spec=AgentRuntimeService)
+        service.thread_id = "current"
+        service.get_config.return_value = {}
+        service.thread_exists.side_effect = lambda tid: tid in {"current", "older"}
+        service.delete_thread.return_value = True
+
+        with TestClient(create_app(lambda **kwargs: service)) as client:
+            client.post(BASE + "/initialize", json={})
+
+            # 404 for non-existent thread
+            resp_404 = client.delete(BASE + "/threads/nonexistent")
+            self.assertEqual(resp_404.status_code, 404)
+            self.assertIn("Thread not found", resp_404.json()["detail"])
+
+            # Delete specific thread
+            resp = client.delete(BASE + "/threads/older")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["data"]["deleted"], True)
+            self.assertEqual(resp.json()["data"]["thread_id"], "older")
+            service.delete_thread.assert_called_with("older")
+
+            # Delete current active thread
+            resp_cur = client.delete(BASE + "/threads")
+            self.assertEqual(resp_cur.status_code, 200)
+            self.assertEqual(resp_cur.json()["data"]["deleted"], True)
+            self.assertEqual(resp_cur.json()["data"]["thread_id"], "current")
+            service.delete_thread.assert_called_with("current")
+
+            # 409 conflict when runtime error (e.g. active run)
+            service.delete_thread.side_effect = RuntimeError("Stop the active run before deleting")
+            resp_409 = client.delete(BASE + "/threads/current")
+            self.assertEqual(resp_409.status_code, 409)
+            self.assertIn("Stop the active run", resp_409.json()["detail"])
+
     def test_config_is_passed_directly_and_busy_stream_can_be_stopped(self):
         entered, release = Event(), Event()
         service = Mock(spec=AgentRuntimeService)
@@ -116,6 +151,56 @@ class AgentRuntimeAPITests(unittest.TestCase):
             service.retry_stream.side_effect = ValueError("Nothing to retry")
             with self.assertLogs("platon", level="ERROR"):
                 self.assertEqual(client.post(BASE + "/retry").status_code, 409)
+
+    def test_chat_attachments_are_resolved_before_streaming(self):
+        service = Mock(spec=AgentRuntimeService)
+        service.thread_id = "thread"
+        service.get_config.return_value = {}
+
+        def stream(message):
+            yield {"type": "delta", "data": message}
+
+        service.stream.side_effect = stream
+        app = create_app(lambda **kwargs: service)
+        with TestClient(app) as client:
+            client.post(BASE + "/initialize", json={})
+            documents = Mock()
+            app.state.document_service = documents
+            documents.build_attachment_context.return_value = "Attached document: important content"
+            response = client.post(BASE + "/chat", json={
+                "message": "Summarize", "document_ids": ["document-one"],
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            documents.build_attachment_context.assert_called_once_with(["document-one"])
+            service.stream.assert_called_once_with("Summarize\n\nAttached document: important content")
+
+            for exception, status in [(FileNotFoundError("Unknown document"), 404),
+                                      (ValueError("Attachment context too large"), 422),
+                                      (RuntimeError("storage unavailable"), 503)]:
+                service.stream.reset_mock()
+                documents.build_attachment_context.side_effect = exception
+                response = client.post(BASE + "/chat", json={
+                    "message": "Summarize", "document_ids": ["missing"],
+                })
+                self.assertEqual(response.status_code, status, response.text)
+                service.stream.assert_not_called()
+
+            documents.reset_mock()
+            response = client.post(BASE + "/chat", json={"message": "Without attachments"})
+            self.assertEqual(response.status_code, 200, response.text)
+            documents.build_attachment_context.assert_not_called()
+            service.stream.assert_called_once_with("Without attachments")
+
+    def test_chat_rejects_invalid_attachment_lists(self):
+        service = Mock(spec=AgentRuntimeService)
+        service.thread_id = "thread"
+        service.get_config.return_value = {}
+        with TestClient(create_app(lambda **kwargs: service)) as client:
+            client.post(BASE + "/initialize", json={})
+            for ids in [[""], [" "], ["a", "a"], ["x" * 129], [str(i) for i in range(11)]]:
+                response = client.post(BASE + "/chat", json={"message": "Hello", "document_ids": ids})
+                self.assertEqual(response.status_code, 422, response.text)
+            service.stream.assert_not_called()
 
     def test_shutdown_stops_active_runtime_before_closing_it(self):
         entered, release = Event(), Event()

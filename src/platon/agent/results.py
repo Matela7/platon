@@ -118,7 +118,11 @@ def visible_messages(messages: list[BaseMessage]) -> list[dict[str, str]]:
     visible = []
     for i, message in enumerate(messages):
         if isinstance(message, HumanMessage):
-            visible.append({"role": "user", "content": content_text(message.content)})
+            entry = {"role": "user", "content": content_text(message.content)}
+            images = getattr(message, "additional_kwargs", {}).get("images")
+            if images:
+                entry["images"] = list(images)
+            visible.append(entry)
         elif isinstance(message, AIMessage) and not message.tool_calls:
             if i + 1 == len(messages) or isinstance(messages[i + 1], HumanMessage):
                 if text := content_text(message.content):

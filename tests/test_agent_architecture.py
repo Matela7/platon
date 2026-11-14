@@ -349,6 +349,8 @@ class AgentArchitectureTests(unittest.TestCase):
         self.assertIs(supervisor.subagents["research"].config, supervisor.config)
         self.assertIs(supervisor.subagents["coding"].config, supervisor.config)
         self.assertIs(supervisor.subagents["database"].config, supervisor.config)
+        self.assertIn("generate_image", {tool.name for tool in supervisor.tools_list})
+        self.assertTrue({f"delegate_{role}" for role in supervisor.subagents} <= {tool.name for tool in supervisor.tools_list})
         self.assertIn("Delegate all document-content analysis", supervisor.prompt)
         self.assertIn(
             "user_request contains relevant original text",
