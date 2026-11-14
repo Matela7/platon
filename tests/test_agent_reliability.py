@@ -44,7 +44,9 @@ class ReliabilityTests(unittest.TestCase):
     def test_stop_terminates_python_process_before_later_side_effect(self):
         stop = Event()
         with TemporaryDirectory() as directory:
-            tool = next(t for t in create_execution_tools(Path(directory)) if t.name == "run_python")
+            tools = {t.name: t for t in create_execution_tools(Path(directory))}
+            tools["create_venv"].invoke({})
+            tool = tools["run_python"]
             code = "from pathlib import Path\nimport time\nPath('started').write_text('yes')\ntime.sleep(20)\nPath('finished').write_text('yes')"
             with ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(tool.invoke, {"code":code}, {"callbacks":[StopHandler(stop)]})

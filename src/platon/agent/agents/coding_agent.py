@@ -26,7 +26,11 @@ class CodingAgent(DeepAgent, WorkflowAgent):
         "Delegate workspace inspection, file changes, code execution, calculations, and report creation. "
         "Use this specialist for concrete work on local files or when another specialist's findings must be "
         "written to an artifact. It can verify changes and consume automatically supplied research or database "
-        "reports, but it cannot browse the web or query private collections."
+        "reports, but it cannot browse the web or query private collections. "
+        "For DOCX, PDF, or PPTX work, include in task an instruction to read and follow the matching "
+        "/skills/docx/SKILL.md, /skills/pdf/SKILL.md, or /skills/pptx/SKILL.md before creating the artifact. "
+        "Preserve the user's topic, language, requested length, and output format; a short document must stay short. "
+        "Coding also selects relevant skills independently when the task omits skill instructions."
     )
     read_only_tools = frozenset({"ls", "read_file", "glob", "grep"})
     use_shared_filesystem = False  # Keep the SDK filesystem rooted at backend_root.
@@ -47,6 +51,8 @@ class CodingAgent(DeepAgent, WorkflowAgent):
             prompt=prompt,
             checkpointer=checkpointer,
         )
+        if not self.config.skills:
+            self.config = self.config.model_copy(update={"skills": ["/skills/"]})
         # Retain working_dir in the constructor for existing callers.
         self.working_dir = self.config.backend_root.expanduser().resolve()
         self.max_tool_calls = self.config.coding_tool_limit

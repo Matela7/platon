@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -21,7 +22,9 @@ class AgentConfig(BaseModel):
         reasoning: Enable Ollama thinking for models that support it.
     """
 
-    model_name: str = "gemma4:26b-a4b-it-qat"
+    model_name: str = Field(
+        default_factory=lambda: os.getenv("OLLAMA_MODEL", "gemma4:26b-a4b-it-qat")
+    )
     model_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     system_prompt: str = "react_prompt.md"
     max_history_messages: int = Field(default=24, ge=1)

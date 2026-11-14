@@ -8,8 +8,8 @@ chroma_data/
 .DS_Store
 *.github/
 
-build/
-dist/
+/build/
+/dist/
 *.egg-info/
 
 .platon/

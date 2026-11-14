@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f7f6f3">
+    <title>Platon.ai</title>
+    <link rel="icon" type="image/png" href="./icon.png">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell" id="app-shell">
+      <aside class="sidebar" aria-label="Nawigacja rozmów">
+        <div class="sidebar-head">
+          <a class="wordmark" href="#" aria-label="Platon.ai — strona główna">
+            <span class="wordmark-mark" aria-hidden="true">P</span><span>Platon.ai</span>
+          </a>
+          <button class="icon-button sidebar-collapse" id="sidebar-toggle" type="button" aria-label="Zwiń panel" aria-expanded="true" title="Zwiń panel (Ctrl+B)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 7l-5 5 5 5"/></svg>
+          </button>
+        </div>
+        <button class="new-chat-button" id="new-chat" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Nowa rozmowa</span><kbd>⌘ K</kbd>
+        </button>
+        <div class="thread-search-box">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="thread-search" class="thread-search-input" placeholder="Szukaj w rozmowach…" aria-label="Szukaj w rozmowach">
+        </div>
+        <div class="section-label"><span>Twoje rozmowy</span><button class="text-icon-button" id="refresh-threads" type="button" aria-label="Odśwież rozmowy" title="Odśwież"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6l2 6M4 12l2 6a7 7 0 0 0 12.4-3"/></svg></button></div>
+        <nav class="thread-list" id="thread-list" aria-label="Lista rozmów"></nav>
+        <div class="sidebar-bottom">
+          <button class="side-action" id="open-documents" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.75h8l4 4v12.5H6z"/><path d="M14 4v4h4M9 13h6M9 16h6"/></svg><span>Dokumenty</span></button>
+          <button class="side-action" id="open-images" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.75" y="4.75" width="16.5" height="14.5" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m5 17 4.5-4.5 3 3L15 13l4 4"/></svg><span>Wygenerowane obrazy</span></button>
+          <button class="side-action" id="open-settings" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Z"/><path d="m19.4 15 .1.1 1.1 1.9-1.8 3.1-2.2-.4a8 8 0 0 1-1.8 1l-.6 2.2h-3.6L10 20.7a8 8 0 0 1-1.8-1l-2.2.4-1.8-3.1 1.1-1.9A8 8 0 0 1 5 13.2l-1.5-1.7 1.8-3.1 2.2.4a8 8 0 0 1 1.8-1l.6-2.2h3.6l.6 2.2a8 8 0 0 1 1.8 1l2.2-.4 1.8 3.1-1.1 1.9a8 8 0 0 1 .6 1.6Z" transform="translate(0 -1) scale(.9) translate(1.3 1.4)"/></svg><span>Ustawienia</span></button>
+          <div class="connection" id="connection-status" title="Status połączenia z backendem"><span class="status-dot"></span><span id="connection-label">Łączenie z backendem…</span><button class="reconnect-button" id="reconnect-button" type="button" title="Odśwież połączenie" aria-label="Odśwież połączenie"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6l2 6M4 12l2 6a7 7 0 0 0 12.4-3"/></svg></button></div>
+        </div>
+      </aside>
+      <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+      <main class="main-panel">
+        <header class="topbar">
+          <button class="icon-button mobile-menu" id="mobile-menu" type="button" aria-label="Otwórz nawigację"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+          <div class="topbar-title"><span class="eyebrow">PRACOWNIA ROZMÓW</span><h1 id="conversation-title">Nowa rozmowa</h1></div>
+          <div class="topbar-actions">
+            <button class="language-toggle" id="language-toggle" type="button" aria-label="Zmień język interfejsu">PL / EN</button>
+            <span class="model-pill" id="model-pill"><span class="status-dot"></span><span>Agent lokalny</span></span>
+            <button class="icon-button" id="theme-toggle-button" type="button" aria-label="Przełącz motyw" title="Zmień motyw (Jasny / Ciemny)"><svg viewBox="0 0 24 24" class="theme-icon" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+            <button class="icon-button" id="export-chat-button" type="button" aria-label="Eksportuj rozmowę" title="Eksportuj rozmowę do Markdown"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+            <button class="icon-button" id="thread-menu-button" type="button" aria-label="Opcje rozmowy" title="Usuń rozmowę"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+            <div class="window-controls" id="window-controls">
+              <button class="window-control-btn window-minimize" id="win-minimize" type="button" aria-label="Minimalizuj" title="Minimalizuj">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+              </button>
+              <button class="window-control-btn window-maximize" id="win-maximize" type="button" aria-label="Maksymalizuj" title="Maksymalizuj">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+              </button>
+              <button class="window-control-btn window-close" id="win-close" type="button" aria-label="Zamknij" title="Zamknij">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+        </header>
+        <section class="conversation-scroll" id="conversation-scroll" aria-label="Wiadomości">
+          <div class="conversation" id="conversation" aria-live="polite" aria-relevant="additions text"></div>
+        </section>
+        <button class="scroll-bottom-btn" id="scroll-bottom-btn" type="button" aria-label="Przewiń na dół" title="Przewiń na dół" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M19 13l-7 7-7-7"/></svg>
+        </button>
+        <div class="composer-wrap">
+          <div class="composer-status" id="composer-status" role="status" aria-live="polite"></div>
+          <form class="composer" id="composer-form">
+            <div class="image-attachment-strip" id="image-attachment-strip" hidden></div>
+            <div class="attachment-strip" id="attachment-strip" hidden></div>
+            <label class="sr-only" for="message-input">Wiadomość</label>
+            <textarea id="message-input" rows="1" placeholder="Napisz, nad czym dziś pracujemy…" autocomplete="off"></textarea>
+            <div class="composer-toolbar">
+              <div class="composer-tools">
+                <button class="tool-button" id="attach-document" type="button" title="Wybierz dokumenty do RAG" aria-label="Wybierz dokumenty do RAG"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 12.5 6.8-6.8a3.2 3.2 0 0 1 4.5 4.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.4-8.4"/></svg><span>Źródła RAG</span></button>
+                <input id="document-picker" type="file" accept=".txt,.pdf,.docx" hidden>
+                <button class="tool-button" id="attach-image" type="button" title="Dołącz zdjęcie (multimodal)" aria-label="Dołącz zdjęcie"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.75" y="4.75" width="16.5" height="14.5" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m5 17 4.5-4.5 3 3L15 13l4 4"/></svg><span>Zdjęcie</span></button>
+                <input id="image-picker" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple hidden>
+                <button class="tool-button stop-button" id="stop-run" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span>Zatrzymaj</span></button>
+                <button class="tool-button discard-button" id="discard-run" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Porzuć niedokończone</span></button>
+                <button class="tool-button retry-button" id="retry-run" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 1-2.3-5.7L20 8"/></svg><span>Wznów</span></button>
+              </div>
+              <button class="send-button" id="send-button" type="submit" aria-label="Wyślij wiadomość" title="Wyślij"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+            </div>
+          </form>
+          <p class="composer-note">Platon może się mylić. Sprawdzaj ważne informacje.</p>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="dialog settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+      <form method="dialog" class="dialog-top"><div><span class="eyebrow">KONFIGURACJA</span><h2 id="settings-title">Ustawienia agenta</h2><p>Połączenie lokalne, wygląd i parametry nowego przebiegu.</p></div><button class="icon-button" value="cancel" aria-label="Zamknij"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></form>
+      <form id="settings-form" class="settings-form">
+        <div class="settings-theme-bar">
+          <span class="setting-title">Motyw interfejsu</span>
+          <div class="theme-options">
+            <label class="theme-choice"><input type="radio" name="app-theme" value="system" checked><span>Systemowy</span></label>
+            <label class="theme-choice"><input type="radio" name="app-theme" value="light"><span>Jasny</span></label>
+            <label class="theme-choice"><input type="radio" name="app-theme" value="dark"><span>Ciemny</span></label>
+          </div>
+        </div>
+        <div id="settings-fields" class="settings-fields"></div>
+        <div class="dialog-footer"><span class="form-hint" id="settings-hint">Zmiany zastąpią aktywny runtime.</span><button class="primary-button" type="submit" id="save-settings">Zapisz ustawienia</button></div>
+      </form>
+    </dialog>
+    <dialog class="dialog library-dialog" id="documents-dialog" aria-labelledby="documents-title">
+      <div class="dialog-top"><div><span class="eyebrow">BAZA WIEDZY</span><h2 id="documents-title">Dokumenty</h2><p>Wybierz kolekcję i dokumenty, które agent ma przeszukać przez RAG.</p></div><button class="icon-button close-dialog" type="button" aria-label="Zamknij"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <div class="dialog-tabs" id="documents-tabs">
+        <button class="dialog-tab is-active" id="tab-documents-rag" type="button">Dokumenty RAG</button>
+        <button class="dialog-tab" id="tab-documents-sent-images" type="button">Przesłane zdjęcia</button>
+      </div>
+      <div id="documents-rag-panel">
+      <form id="upload-form" class="upload-form"><label class="upload-drop" for="upload-picker"><span class="upload-symbol"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4m-4 4 4-4 4 4M5 14v5h14v-5"/></svg></span><strong>Wybierz plik do indeksowania</strong><span>PDF, DOCX lub TXT · maks. 100 MB</span><input id="upload-picker" type="file" accept=".txt,.pdf,.docx" required></label><div class="upload-options"><label for="upload-collection">Kolekcja</label><select id="upload-collection" name="collection"><option value="documents">documents</option><option value="__new__">Nowa kolekcja…</option></select><button class="primary-button" type="submit">Dodaj dokument</button></div><label class="new-collection-field" id="new-collection-field" hidden for="collection-name">Nazwa nowej kolekcji<input id="collection-name" minlength="3" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{1,61}[A-Za-z0-9]" placeholder="np. matematyka" disabled></label></form>
+      <div class="library-search-wrap">
+        <label class="collection-filter" for="document-collection">Kolekcja<select id="document-collection" class="dialog-search-input"><option value="">Wszystkie kolekcje</option></select></label>
+        <input type="search" id="document-search" class="dialog-search-input" placeholder="Filtruj dokumenty po nazwie lub kolekcji…" aria-label="Filtruj dokumenty">
+      </div>
+      <div class="library-list-head"><span>ZAINDEKSOWANE DOKUMENTY</span><button class="text-button" id="refresh-documents" type="button">Odśwież</button></div><div class="document-list" id="document-list"></div>
+      <div class="dialog-footer library-footer"><span class="form-hint" id="attachment-count">0 wybranych</span><button class="primary-button" id="apply-attachments" type="button">Użyj w RAG</button></div>
+      </div>
+      <div id="documents-sent-images-panel" hidden>
+        <div class="library-search-wrap">
+          <input type="search" id="sent-images-search" class="dialog-search-input" placeholder="Filtruj przesłane zdjęcia…" aria-label="Filtruj przesłane zdjęcia">
+        </div>
+        <div class="library-list-head"><span id="sent-images-status" role="status" aria-live="polite"></span><button class="text-button" id="refresh-sent-images" type="button">Odśwież</button></div>
+        <div class="sent-images-grid" id="sent-images-grid"></div>
+      </div>
+    </dialog>
+    <dialog class="dialog image-dialog" id="images-dialog" aria-labelledby="images-title">
+      <div class="dialog-top"><div><span class="eyebrow">GALERIA</span><h2 id="images-title">Wygenerowane obrazy</h2><p>Podgląd obrazów utworzonych w rozmowach.</p></div><button class="icon-button close-dialog" type="button" aria-label="Zamknij"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <div class="library-search-wrap">
+        <input type="search" id="image-search" class="dialog-search-input" placeholder="Filtruj obrazy po nazwie pliku…" aria-label="Filtruj obrazy">
+      </div>
+      <div class="library-list-head"><span id="image-gallery-status" role="status" aria-live="polite"></span><button class="text-button" id="refresh-images" type="button">Odśwież</button></div>
+      <div class="image-grid" id="image-grid"></div>
+    </dialog>
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script type="module" src="./i18n.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

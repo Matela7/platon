@@ -1,0 +1,98 @@
+[
+  {
+    "file": "all-states.gif",
+    "frames": 57,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "failed.gif",
+    "frames": 8,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "idle-jump-idle.gif",
+    "frames": 17,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "idle.gif",
+    "frames": 6,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "jumping.gif",
+    "frames": 5,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "look-loop.gif",
+    "frames": 16,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "review.gif",
+    "frames": 6,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "running-left.gif",
+    "frames": 8,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "running-right.gif",
+    "frames": 8,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "running.gif",
+    "frames": 6,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "waiting.gif",
+    "frames": 6,
+    "size": [
+      192,
+      208
+    ]
+  },
+  {
+    "file": "waving.gif",
+    "frames": 4,
+    "size": [
+      192,
+      208
+    ]
+  }
+]
