@@ -26,27 +26,34 @@ jobs:
     timeout-minutes: 10
     outputs:
       ref: ${{ steps.source.outputs.ref }}
+    permissions:
+      contents: write
     steps:
-      - name: Resolve checkout ref
-        id: checkout_ref
-        env:
-          TAG: ${{ inputs.tag }}
-          PUBLISH: ${{ inputs.publish }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -n "$TAG" ] && git ls-remote --exit-code --tags "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$TAG" >/dev/null; then
-            ref="refs/tags/$TAG"
-          else
-            ref="$GITHUB_SHA"
-            if [ -n "$TAG" ]; then
-              echo "::warning::Tag $TAG not found; building from workflow commit $GITHUB_SHA."
-            fi
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         with:
-          ref: ${{ steps.checkout_ref.outputs.ref }}
-          persist-credentials: false
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - name: Resolve existing release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$TAG" ]; then
+            exit 0
+          fi
+          git check-ref-format "refs/tags/$TAG"
+          if git ls-remote --exit-code --refs origin "refs/tags/$TAG"; then
+            git fetch --no-tags origin "refs/tags/$TAG"
+            git checkout --detach FETCH_HEAD
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              echo "::error::Could not check the remote tag (exit $status)."
+              exit "$status"
+            fi
+            echo "Tag $TAG is missing; it will be created on $GITHUB_SHA after version validation."
+          fi
       - name: Validate release version before building
         if: inputs.publish
         env:
@@ -59,6 +66,36 @@ jobs:
           if os.environ['RELEASE_TAG'] != f'v{version}':
               raise SystemExit(f'Publishing requires tag v{version}, matching the app version.')
           PY
+      - name: Publish and verify release tag before building
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Recheck in case another run published the tag after the first lookup.
+          if git ls-remote --exit-code --refs origin "refs/tags/$TAG"; then
+            git fetch --no-tags origin "refs/tags/$TAG"
+            if [ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::Tag $TAG now points to another commit. Rerun to build that tag."
+              exit 1
+            fi
+          else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              echo "::error::Could not check the remote tag (exit $status)."
+              exit "$status"
+            fi
+            git tag -- "$TAG" "$GITHUB_SHA"
+            # Never force or ignore a failed push, including a concurrent creation.
+            git push origin "refs/tags/$TAG:refs/tags/$TAG"
+            remote_tag=$(git ls-remote --exit-code --refs origin "refs/tags/$TAG")
+            local_tag=$(git rev-parse "refs/tags/$TAG")
+            if [ "${remote_tag%%[[:space:]]*}" != "$local_tag" ]; then
+              echo "::error::Remote tag verification failed for $TAG."
+              exit 1
+            fi
+          fi
       - name: Resolve one source commit for all platforms
         id: source
         run: echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
