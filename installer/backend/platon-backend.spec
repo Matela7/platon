@@ -1,7 +1,6 @@
 """Build on each target OS: python -m PyInstaller --clean --noconfirm ..."""
 from pathlib import Path
 from importlib.util import find_spec
-import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 root = Path(SPECPATH).resolve().parents[1]
@@ -41,9 +40,5 @@ hiddenimports += modules_from_files("platon")
 hiddenimports += ["uvicorn.logging", "uvicorn.loops.asyncio", "uvicorn.protocols.http.h11_impl", "uvicorn.lifespan.on"]
 a = Analysis([str(root / "installer" / "backend" / "entrypoint.py")], pathex=[str(root / "src")], binaries=binaries, datas=datas, hiddenimports=hiddenimports, excludes=["tkinter", "pytest", "IPython"], noarchive=False)
 pyz = PYZ(a.pure)
-if sys.platform == "linux":
-    # Keep Linux ML libraries outside CArchive, whose offsets and sizes are uint32.
-    exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="platon-backend", debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=True)
-    coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="platon-backend")
-else:
-    exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name="platon-backend", debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=True)
+# The Linux installer uses CPU-only torch to keep this CArchive below 4 GiB.
+exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name="platon-backend", debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=True)

@@ -1,6 +1,6 @@
 # Platon Installer
 
-This pipeline packages the Electron frontend and a PyInstaller backend: `onedir` on Linux and `onefile` on Windows and macOS. On Linux, native ML libraries and data remain in the backend's `_internal` directory to avoid the CArchive 4 GiB limit, and the installer includes the entire backend bundle. End users do not need to install Python, Node.js, or uv. The package also includes a separate CPython interpreter for the agent's code execution tools; the PyInstaller executable alone does not replace a general-purpose Python interpreter.
+This pipeline packages the Electron frontend and a PyInstaller `onefile` backend on all platforms. Linux x64 builds use CPU-only PyTorch instead of the multi-GB CUDA/NVIDIA runtime to reduce package size and avoid overflowing the CArchive 4 GiB limit. Windows and macOS keep their existing dependencies. Linux embeddings run on CPU; Ollama uses its own runtime and can still use a GPU. End users do not need to install Python, Node.js, or uv. The package also includes a separate CPython interpreter for the agent's code execution tools; the PyInstaller executable alone does not replace a general-purpose Python interpreter.
 
 The build targets are Windows x64 (NSIS `.exe` installer), macOS Apple Silicon/ARM64 (`.dmg` and `.zip`), and Linux x64 (AppImage). Build each package on its target operating system. The script accepts macOS 14+ and glibc 2.28+, but CI builds on macOS 15 and Ubuntu 22.04/glibc 2.35. Do not claim that these CI artifacts support older systems without testing them. To release for macOS 14 or glibc 2.28, build on a suitable native machine and verify all ML libraries. This pipeline does not support Intel Macs, native Windows ARM, Linux ARM, or Alpine/musl.
 
@@ -25,7 +25,7 @@ npm --prefix platon_frontend version patch --no-git-tag-version
 uv run --no-project --python 3.13 python installer/scripts/build.py
 ```
 
-To repeat a build of the same version, run only the second command. For frontend-only changes, you can add `--skip-backend`. After changing Python code or its dependencies, run a full build. On Linux, existing `onefile` staging cannot be reused with `--skip-backend`; rebuild once to create the `onedir` bundle. You do not need to delete the staging directory or build environment manually.
+To repeat a build of the same version, run only the second command. For frontend-only changes, you can add `--skip-backend`. After changing Python code or its dependencies, run a full build. On Linux, rebuild once without `--skip-backend` to replace any previous `onedir` or CUDA backend with the CPU-only `onefile` backend. The build automatically removes the previous Linux `onedir` bundle and synchronizes dependencies; you do not need to delete the staging directory or build environment manually.
 
 You can also commit and push your changes, then open **Actions → the workflow for your target system → Run workflow** on GitHub. Once it finishes, download the artifact listed below. Building an installer does not distribute an update to users; you must also publish the package and update metadata from `installer/dist` to the release channel.
 

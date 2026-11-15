@@ -50,6 +50,12 @@ def main() -> None:
     if not args.skip_backend:
         run("uv", "python", "install", "3.13")
         run("uv", "sync", "--frozen", "--no-dev", "--python", "3.13")
+        # PyInstaller cannot replace an old onedir bundle with a onefile binary.
+        previous_bundle = staging / "backend" / "platon-backend"
+        if os_target == "linux" and previous_bundle.is_dir():
+            if previous_bundle.is_symlink() or previous_bundle.resolve().parent != (staging / "backend").resolve():
+                raise SystemExit("Refusing to replace backend outside installer/staging/backend")
+            shutil.rmtree(previous_bundle)
         run("uv", "run", "--frozen", "--no-dev", "--with-requirements", str(INSTALLER / "backend" / "requirements-build.txt"), "python", "-m", "PyInstaller", "--clean", "--noconfirm", "--distpath", str(staging / "backend"), "--workpath", str(INSTALLER / "backend" / "build"), str(INSTALLER / "backend" / "platon-backend.spec"))
         # uv run sets VIRTUAL_ENV; copy the full interpreter, not its venv launcher.
         interpreter = Path(subprocess.check_output(["uv", "python", "find", "--system", "--managed-python", "3.13"], text=True).strip()).resolve()
@@ -64,10 +70,8 @@ def main() -> None:
     elif not (staging / "target.json").is_file() or json.loads((staging / "target.json").read_text(encoding="utf-8")) != [os_target, arch]:
         raise SystemExit("Staged backend target differs from this machine. Rebuild without --skip-backend.")
     backend_bundle = staging / "backend"
-    if os_target == "linux":
-        backend_bundle /= "platon-backend"
     executable = backend_bundle / ("platon-backend.exe" if os.name == "nt" else "platon-backend")
-    if not executable.is_file() or not (staging / "python").is_dir() or (os_target == "linux" and not (backend_bundle / "_internal").is_dir()):
+    if not executable.is_file() or not (staging / "python").is_dir():
         raise SystemExit("Missing staged backend/Python. Run without --skip-backend first.")
     os.environ["PLATON_PYTHON_EXECUTABLE"] = str(staging / "python" / ("python.exe" if os.name == "nt" else "bin/python3.13"))
     run(str(executable), "--self-test")
